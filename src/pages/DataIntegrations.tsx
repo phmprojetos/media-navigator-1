@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -20,8 +20,9 @@ import {
   RefreshCw, Link2, Unlink, ShieldCheck, CheckCircle2, XCircle,
   AlertTriangle, Clock, FileUp, FileSpreadsheet, ExternalLink,
   Download, Info, ChevronDown, ChevronRight, Layers, Zap,
-  Key, Code2, Plus, Eye, EyeOff, Copy, Trash2,
+  Key, Code2, Plus, Eye, EyeOff, Copy, Trash2, Users, Search,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { format, differenceInHours } from "date-fns";
 import { toast } from "@/hooks/use-toast";
@@ -40,6 +41,9 @@ import { MOCK_VALIDATION_ISSUES } from "@/data/dataArchitectureData";
 import type { ApiKey } from "@/types/integration";
 import { INTERNAL_API_ENDPOINTS } from "@/types/integration";
 import { API_KEYS, generateFakeApiKey, maskApiKey } from "@/data/integrationData";
+import { ClientAccountLinkingPanel } from "@/components/data/ClientAccountLinkingPanel";
+import { displayClientName, useClient } from "@/contexts/ClientContext";
+import { describeSyncIssue, isSyncTimedOut } from "@/lib/syncStatusCopy";
 
 // ── Helpers ──
 
@@ -85,6 +89,7 @@ export default function DataIntegrations() {
         <Tabs defaultValue="dsp" className="space-y-4">
           <TabsList className="bg-muted/50 flex-wrap h-auto p-1 gap-1">
             <TabsTrigger value="dsp" className="text-xs gap-1.5"><Plug className="w-3.5 h-3.5" />Conexões DSP</TabsTrigger>
+            <TabsTrigger value="client-links" className="text-xs gap-1.5"><Users className="w-3.5 h-3.5" />Clientes ↔ Contas</TabsTrigger>
             <TabsTrigger value="upload" className="text-xs gap-1.5"><Upload className="w-3.5 h-3.5" />Upload de Dados</TabsTrigger>
             <TabsTrigger value="warehouse" className="text-xs gap-1.5"><Database className="w-3.5 h-3.5" />Warehouse Externo</TabsTrigger>
             <TabsTrigger value="sync-history" className="text-xs gap-1.5"><History className="w-3.5 h-3.5" />Histórico de Sync</TabsTrigger>
@@ -94,6 +99,7 @@ export default function DataIntegrations() {
           </TabsList>
 
           <TabsContent value="dsp"><DSPTab /></TabsContent>
+          <TabsContent value="client-links"><ClientAccountLinkingPanel /></TabsContent>
           <TabsContent value="upload"><UploadTab /></TabsContent>
           <TabsContent value="warehouse"><WarehouseTab /></TabsContent>
           <TabsContent value="sync-history"><SyncHistoryTab /></TabsContent>
@@ -115,7 +121,9 @@ interface PlatformConnectionRow {
   account_id: string;
   account_name: string | null;
   connected_at: string;
+  updated_at?: string | null;
   is_selected: boolean;
+  client_id: string | null;
   sync_status: "pending" | "syncing" | "ready_partial" | "ready" | "auth_error" | "failed";
   sync_error: string | null;
   last_synced_at: string | null;
@@ -133,7 +141,7 @@ function DSPTab() {
   const [dv360Loading, setDv360Loading] = useState(true);
   const [dv360Connecting, setDv360Connecting] = useState(false);
 
-  const CONNECTION_FIELDS = "id, account_id, account_name, connected_at, is_selected, sync_status, sync_error, last_synced_at";
+  const CONNECTION_FIELDS = "id, account_id, account_name, connected_at, updated_at, is_selected, client_id, sync_status, sync_error, last_synced_at";
 
   const fetchMetaConnections = useCallback(async () => {
     const { data, error } = await (supabase as any)
@@ -528,6 +536,174 @@ function SyncResultsList({ results }: { results: SyncResultItem[] }) {
   );
 }
 
+function accountNeedsSync(acc: PlatformConnectionRow, now = Date.now()): boolean {
+  if (isSyncTimedOut(acc.sync_status, acc.updated_at, now)) return true;
+  if (acc.sync_status === "syncing") return false;
+  if (acc.last_synced_at && (acc.sync_status === "ready" || acc.sync_status === "ready_partial")) return false;
+  return true;
+}
+
+function defaultSyncSelection(accounts: PlatformConnectionRow[], maxSelect?: number): string[] {
+  const ids = accounts.filter((a) => accountNeedsSync(a)).map(a => a.account_id);
+  return typeof maxSelect === "number" ? ids.slice(0, maxSelect) : ids;
+}
+
+function formatLastSyncedAt(iso: string | null): string {
+  if (!iso) return "nunca";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "nunca";
+  const hours = differenceInHours(new Date(), d);
+  if (hours < 1) return "agora";
+  if (hours < 24) return `há ${hours}h`;
+  if (hours < 48) return "ontem";
+  return format(d, "dd/MM HH:mm");
+}
+
+function AccountSyncList({
+  accounts,
+  selectedIds,
+  onToggle,
+  maxSelect,
+}: {
+  accounts: PlatformConnectionRow[];
+  selectedIds: string[];
+  onToggle: (accountId: string) => void;
+  maxSelect?: number;
+}) {
+  const { clients } = useClient();
+  const [query, setQuery] = useState("");
+  const [now, setNow] = useState(Date.now());
+  const clientNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    clients.forEach(c => map.set(c.id, displayClientName(c)));
+    return map;
+  }, [clients]);
+
+  useEffect(() => {
+    if (!accounts.some((a) => a.sync_status === "syncing")) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [accounts]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return accounts;
+    return accounts.filter(acc => {
+      const client = acc.client_id ? clientNameById.get(acc.client_id) ?? "" : "";
+      return (
+        (acc.account_name || "").toLowerCase().includes(q) ||
+        acc.account_id.toLowerCase().includes(q) ||
+        client.toLowerCase().includes(q)
+      );
+    });
+  }, [accounts, query, clientNameById]);
+
+  const needsSync = filtered.filter((a) => accountNeedsSync(a, now));
+  const inProgress = filtered.filter((a) => a.sync_status === "syncing" && !isSyncTimedOut(a.sync_status, a.updated_at, now));
+  const synced = filtered.filter((a) => !accountNeedsSync(a, now) && a.sync_status !== "syncing");
+  const atLimit = typeof maxSelect === "number" && selectedIds.length >= maxSelect;
+
+  const toneClass: Record<string, string> = {
+    ok: "text-emerald-400",
+    progress: "text-sky-400",
+    warn: "text-amber-400",
+    error: "text-red-400",
+  };
+
+  const renderRow = (acc: PlatformConnectionRow, emphasize: boolean) => {
+    const checked = selectedIds.includes(acc.account_id);
+    const liveSync = acc.sync_status === "syncing" && !isSyncTimedOut(acc.sync_status, acc.updated_at, now);
+    const disabled = liveSync || (atLimit && !checked);
+    const clientName = acc.client_id ? clientNameById.get(acc.client_id) : null;
+    const primary = clientName || acc.account_name || acc.account_id;
+    const issue = describeSyncIssue(acc, now);
+    const secondary = issue.tone === "ok"
+      ? (clientName ? acc.account_name || acc.account_id : "Sem cliente CRM")
+      : issue.detail;
+    const rightLabel = issue.tone === "ok" ? formatLastSyncedAt(acc.last_synced_at) : issue.label;
+
+    return (
+      <button
+        type="button"
+        key={acc.account_id}
+        disabled={disabled}
+        onClick={() => { if (!disabled) onToggle(acc.account_id); }}
+        className={cn(
+          "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors border",
+          checked && "bg-primary/10 border-primary/30",
+          !checked && emphasize && "bg-amber-500/5 border-amber-500/25 hover:bg-amber-500/10",
+          !checked && !emphasize && "bg-muted/20 border-transparent hover:bg-muted/40",
+          disabled && "opacity-60 cursor-not-allowed"
+        )}
+      >
+        <Checkbox checked={checked} disabled={disabled} className="pointer-events-none" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate leading-tight">{primary}</p>
+          <p className={cn("text-[11px] truncate mt-0.5", issue.tone === "ok" ? "text-muted-foreground" : toneClass[issue.tone])}>
+            {secondary}
+          </p>
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className={cn("text-[11px] font-medium shrink-0 text-right max-w-[8.5rem] leading-tight tabular-nums", toneClass[issue.tone])}>
+              {liveSync && <RefreshCw className="w-3 h-3 inline-block mr-1 animate-spin" />}
+              {rightLabel}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="left" className="max-w-xs text-xs">
+            {issue.detail || `Última sync: ${formatLastSyncedAt(acc.last_synced_at)}`}
+          </TooltipContent>
+        </Tooltip>
+      </button>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      {accounts.length > 8 && (
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          <Input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Buscar conta ou cliente…"
+            className="h-8 text-sm pl-8"
+          />
+        </div>
+      )}
+      <div className="space-y-3 max-h-80 overflow-y-auto py-1 pr-1">
+        {needsSync.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] uppercase tracking-wide text-amber-400 font-medium px-0.5">
+              Sincronizar agora ({needsSync.length})
+            </p>
+            {needsSync.map(acc => renderRow(acc, true))}
+          </div>
+        )}
+        {inProgress.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] uppercase tracking-wide text-sky-400 font-medium px-0.5">
+              Em andamento ({inProgress.length}) · limite 1 min
+            </p>
+            {inProgress.map(acc => renderRow(acc, false))}
+          </div>
+        )}
+        {synced.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium px-0.5">
+              Já sincronizadas ({synced.length})
+            </p>
+            {synced.map(acc => renderRow(acc, false))}
+          </div>
+        )}
+        {filtered.length === 0 && (
+          <p className="text-sm text-muted-foreground text-center py-6">Nenhuma conta encontrada.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Seleção de contas descobertas (usado nos 3 cards de DSP) ──
 // Contas chegam de uma conexão OAuth com is_selected=false — o usuário escolhe explicitamente
 // quais entram no produto antes de poderem ser sincronizadas.
@@ -711,7 +887,7 @@ function MetaAdsCard({
             onClick={() => setSelectOpen(true)}
             className="w-full text-left p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors"
           >
-            {discoveredAccounts.length} conta{discoveredAccounts.length > 1 ? "s" : ""} nova{discoveredAccounts.length > 1 ? "s" : ""} descoberta{discoveredAccounts.length > 1 ? "s" : ""} — selecionar
+            {discoveredAccounts.length} conta{discoveredAccounts.length > 1 ? "s" : ""} nova{discoveredAccounts.length > 1 ? "s" : ""} descoberta{discoveredAccounts.length > 1 ? "s" : ""} — selecionar para sincronizar
           </button>
         )}
 
@@ -768,38 +944,29 @@ function MetaAdsCard({
         />
 
         {/* Sync Modal */}
-        <Dialog open={syncOpen} onOpenChange={(open) => { setSyncOpen(open); if (!open) { setSelectedIds([]); setSyncResults(null); } }}>
+        <Dialog open={syncOpen} onOpenChange={(open) => {
+          setSyncOpen(open);
+          if (!open) { setSelectedIds([]); setSyncResults(null); }
+          else setSelectedIds(defaultSyncSelection(realAccounts, 3));
+        }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Sincronizar dados do Meta Ads</DialogTitle>
               <DialogDescription>
                 {syncResults
                   ? "Resultado da sincronização por conta."
-                  : "Selecione até 3 contas por vez. Os dados dos últimos 30 dias serão importados para o Pattern Intelligence."}
+                  : "Novas já vêm marcadas. Nas sincronizadas, a data fica à direita. Até 3 por vez."}
               </DialogDescription>
             </DialogHeader>
             {syncResults ? (
               <SyncResultsList results={syncResults} />
             ) : (
-              <div className="space-y-2 max-h-64 overflow-y-auto py-1">
-                {realAccounts.map(acc => (
-                  <label
-                    key={acc.account_id}
-                    className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(acc.account_id)}
-                      onChange={() => toggleAccount(acc.account_id)}
-                      className="w-4 h-4 accent-primary flex-shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{acc.account_name || acc.account_id}</p>
-                      <p className="text-xs text-muted-foreground">{acc.account_id}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
+              <AccountSyncList
+                accounts={realAccounts}
+                selectedIds={selectedIds}
+                onToggle={toggleAccount}
+                maxSelect={3}
+              />
             )}
             <DialogFooter className="gap-2">
               {syncResults ? (
@@ -920,7 +1087,7 @@ function GoogleAdsCard({
             onClick={() => setSelectOpen(true)}
             className="w-full text-left p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors"
           >
-            {discoveredAccounts.length} conta{discoveredAccounts.length > 1 ? "s" : ""} nova{discoveredAccounts.length > 1 ? "s" : ""} descoberta{discoveredAccounts.length > 1 ? "s" : ""} — selecionar
+            {discoveredAccounts.length} conta{discoveredAccounts.length > 1 ? "s" : ""} nova{discoveredAccounts.length > 1 ? "s" : ""} descoberta{discoveredAccounts.length > 1 ? "s" : ""} — selecionar para sincronizar
           </button>
         )}
 
@@ -980,38 +1147,28 @@ function GoogleAdsCard({
         />
 
         {/* Sync Modal */}
-        <Dialog open={syncOpen} onOpenChange={(open) => { setSyncOpen(open); if (!open) { setSelectedIds([]); setSyncResults(null); } }}>
+        <Dialog open={syncOpen} onOpenChange={(open) => {
+          setSyncOpen(open);
+          if (!open) { setSelectedIds([]); setSyncResults(null); }
+          else setSelectedIds(defaultSyncSelection(realAccounts));
+        }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Sincronizar dados do Google Ads</DialogTitle>
               <DialogDescription>
                 {syncResults
                   ? "Resultado da sincronização por conta."
-                  : "Selecione as contas. Os dados dos últimos 90 dias serão importados para o Pattern Intelligence."}
+                  : "Novas já vêm marcadas. Nas sincronizadas, a data fica à direita — marque só para atualizar."}
               </DialogDescription>
             </DialogHeader>
             {syncResults ? (
               <SyncResultsList results={syncResults} />
             ) : (
-              <div className="space-y-2 max-h-64 overflow-y-auto py-1">
-                {realAccounts.map(acc => (
-                  <label
-                    key={acc.account_id}
-                    className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(acc.account_id)}
-                      onChange={() => toggleAccount(acc.account_id)}
-                      className="w-4 h-4 accent-primary flex-shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{acc.account_name || acc.account_id}</p>
-                      <p className="text-xs text-muted-foreground">{acc.account_id}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
+              <AccountSyncList
+                accounts={realAccounts}
+                selectedIds={selectedIds}
+                onToggle={toggleAccount}
+              />
             )}
             <DialogFooter className="gap-2">
               {syncResults ? (
@@ -1172,7 +1329,7 @@ function DV360Card({
             onClick={() => setSelectOpen(true)}
             className="w-full text-left p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors"
           >
-            {discoveredAccounts.length} anunciante{discoveredAccounts.length > 1 ? "s" : ""} novo{discoveredAccounts.length > 1 ? "s" : ""} descoberto{discoveredAccounts.length > 1 ? "s" : ""} — selecionar
+            {discoveredAccounts.length} anunciante{discoveredAccounts.length > 1 ? "s" : ""} novo{discoveredAccounts.length > 1 ? "s" : ""} descoberto{discoveredAccounts.length > 1 ? "s" : ""} — selecionar para sincronizar
           </button>
         )}
 
@@ -1232,38 +1389,28 @@ function DV360Card({
         />
 
         {/* Sync Modal */}
-        <Dialog open={syncOpen} onOpenChange={(open) => { setSyncOpen(open); if (!open) { setSelectedIds([]); setSyncResults(null); } }}>
+        <Dialog open={syncOpen} onOpenChange={(open) => {
+          setSyncOpen(open);
+          if (!open) { setSelectedIds([]); setSyncResults(null); }
+          else setSelectedIds(defaultSyncSelection(realAccounts));
+        }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Sincronizar dados do DV360</DialogTitle>
               <DialogDescription>
                 {syncResults
                   ? "Resultado da sincronização por conta."
-                  : "Selecione os anunciantes. Os dados dos últimos 90 dias serão importados para o Pattern Intelligence."}
+                  : "Novos já vêm marcados. Nos sincronizados, a data fica à direita — marque só para atualizar."}
               </DialogDescription>
             </DialogHeader>
             {syncResults ? (
               <SyncResultsList results={syncResults} />
             ) : (
-              <div className="space-y-2 max-h-64 overflow-y-auto py-1">
-                {realAccounts.map(acc => (
-                  <label
-                    key={acc.account_id}
-                    className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(acc.account_id)}
-                      onChange={() => toggleAccount(acc.account_id)}
-                      className="w-4 h-4 accent-primary flex-shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{acc.account_name || acc.account_id}</p>
-                      <p className="text-xs text-muted-foreground">{acc.account_id}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
+              <AccountSyncList
+                accounts={realAccounts}
+                selectedIds={selectedIds}
+                onToggle={toggleAccount}
+              />
             )}
             {syncing && syncProgress && (
               <p className="text-xs text-muted-foreground">{syncProgress}</p>

@@ -29,21 +29,13 @@ import {
   Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Area, Legend, ComposedChart,
 } from "recharts";
-import { FUNNEL_DAILY_DATA } from "@/data/funnelImpactData";
 import {
   runFunnelImpactAnalysis, runSimulation,
 } from "@/lib/funnelImpactEngine";
-import type { TPIWeights, SimulationInput, FunnelDailyRecord } from "@/types/funnelImpact";
-import { supabase } from "@/integrations/supabase/client";
-
-type CampaignSummary = {
-  campaign_id: string;
-  campaign_name: string;
-  objective: string;
-  funnel_stage: string;
-  totalSpend: number;
-  totalConversions: number;
-};
+import type { TPIWeights, SimulationInput } from "@/types/funnelImpact";
+import { useClient, displayClientName } from "@/contexts/ClientContext";
+import { useClientPatternFunnel } from "@/hooks/useClientPatternFunnel";
+import type { ClassifiedCampaignSummary } from "@/lib/funnelRole";
 
 type AttributionSummary = {
   conv1dClick: number;
@@ -71,7 +63,7 @@ const sensitivityMeta = {
 const TOOLTIPS: Record<string, { title: string; text: string }> = {
   incrementoEstimado: {
     title: "Conversões Incrementais",
-    text: "Estimativa do impacto adicional gerado pelas campanhas de topo sobre os resultados de fundo de funil, considerando defasagem temporal e efeito acumulado.",
+    text: "Estimativa do impacto adicional gerado pelas campanhas de topo sobre as conversões de venda (evento purchase) do fundo de funil, considerando defasagem temporal e efeito acumulado. Leads e outros eventos não entram neste indicador.",
   },
   reducaoCPA: {
     title: "Redução de CPA",
@@ -142,171 +134,28 @@ const WALKTHROUGH_STEPS = [
 const WALKTHROUGH_KEY = "pi_walkthrough_completed";
 
 export default function PatternIntelligence() {
+  const { selectedClientId, selectedClient } = useClient();
+  const clientFunnel = useClientPatternFunnel(selectedClientId);
+
   const [tpiWeights, setTpiWeights] = useState<TPIWeights>({ alcance: 0.4, frequencia: 0.3, investimento: 0.3 });
   const [simType, setSimType] = useState<"percent" | "absolute">("percent");
   const [simValue, setSimValue] = useState<number>(10);
+  const [ticketMedio, setTicketMedio] = useState<number>(0);
   const [methodologyOpen, setMethodologyOpen] = useState(false);
   const [walkthroughOpen, setWalkthroughOpen] = useState(false);
   const [walkthroughStep, setWalkthroughStep] = useState(0);
 
-  // Real data state
-  const [selectedPlatform, setSelectedPlatform] = useState<"meta_ads" | "google_ads" | "dv360">("meta_ads");
-  const [syncedAccounts, setSyncedAccounts] = useState<{ account_id: string; account_name: string | null; platform: string }[]>([]);
-  const [selectedAccount, setSelectedAccount] = useState<string>("mock");
-  const [realData, setRealData] = useState<FunnelDailyRecord[] | null>(null);
-  const [dataLoading, setDataLoading] = useState(false);
-  const [isClickProxy, setIsClickProxy] = useState(false);
-  const [ticketMedio, setTicketMedio] = useState<number>(0);
-  const [lastSync, setLastSync] = useState<string | null>(null);
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
-  const [attributionSummary, setAttributionSummary] = useState<AttributionSummary>(null);
-  const [clickEfficiency, setClickEfficiency] = useState<{ avgCtr: number; avgCpm: number; avgCpc: number; totalUniqueClicks: number; avgUniqueCtr: number } | null>(null);
+  const realData = clientFunnel.series;
+  const dataLoading = clientFunnel.loading;
+  const isClickProxy = clientFunnel.isClickProxy;
+  const lastSync = clientFunnel.lastSync;
+  const campaigns = clientFunnel.campaigns;
+  const attributionSummary = clientFunnel.attributionSummary as AttributionSummary;
+  const clickEfficiency = clientFunnel.clickEfficiency;
+  const hasClient = !!selectedClientId;
+  const clientLabel = selectedClient ? displayClientName(selectedClient) : null;
 
-  // Fetch accounts that have synced data (todas as plataformas — o filtro por plataforma acontece no dropdown)
-  useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase.from as any)("funnel_daily_records")
-      .select("account_id, account_name, platform")
-      .then(({ data }: { data: { account_id: string; account_name: string | null; platform: string }[] | null }) => {
-        if (!data?.length) return;
-        const seen = new Set<string>();
-        const unique = data.filter(r => {
-          const key = `${r.platform}__${r.account_id}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        setSyncedAccounts(unique);
-      });
-  }, []);
-
-  // Ao trocar de plataforma, volta pra "Dados de demonstração" (a conta selecionada pode não existir na nova plataforma)
-  useEffect(() => {
-    setSelectedAccount("mock");
-  }, [selectedPlatform]);
-
-  const accountsForPlatform = useMemo(
-    () => syncedAccounts.filter(a => a.platform === selectedPlatform),
-    [syncedAccounts, selectedPlatform]
-  );
-
-  // Fetch campaign breakdown when account changes
-  useEffect(() => {
-    if (selectedAccount === "mock") { setCampaigns([]); return; }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase.from as any)("funnel_daily_records")
-      .select("campaign_id, campaign_name, objective, funnel_stage, investimento, conversoes")
-      .eq("platform", selectedPlatform)
-      .eq("account_id", selectedAccount)
-      .neq("campaign_id", "")
-      .then(({ data }: { data: { campaign_id: string; campaign_name: string | null; objective: string | null; funnel_stage: string; investimento: number; conversoes: number }[] | null }) => {
-        if (!data?.length) { setCampaigns([]); return; }
-        const map = new Map<string, CampaignSummary>();
-        for (const row of data) {
-          const existing = map.get(row.campaign_id) ?? {
-            campaign_id: row.campaign_id,
-            campaign_name: row.campaign_name || row.campaign_id,
-            objective: row.objective || "",
-            funnel_stage: row.funnel_stage,
-            totalSpend: 0,
-            totalConversions: 0,
-          };
-          existing.totalSpend += row.investimento;
-          existing.totalConversions += row.conversoes;
-          map.set(row.campaign_id, existing);
-        }
-        const sorted = Array.from(map.values()).sort((a, b) => b.totalSpend - a.totalSpend);
-        setCampaigns(sorted);
-      });
-  }, [selectedAccount, selectedPlatform]);
-
-  // Fetch real data when account changes
-  useEffect(() => {
-    if (selectedAccount === "mock") { setRealData(null); setLastSync(null); setAttributionSummary(null); return; }
-    setDataLoading(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase.from as any)("funnel_daily_records")
-      .select("date, funnel_stage, investimento, alcance, frequencia, impressoes, conversoes, receita, synced_at, conv_1d_click, conv_7d_click, conv_1d_view, conv_7d_view, ctr, cpm, cpc, unique_clicks, unique_ctr")
-      .eq("platform", selectedPlatform)
-      .eq("account_id", selectedAccount)
-      .eq("campaign_id", "")
-      .order("date")
-      .then(({ data }) => {
-        if (!data?.length) { setRealData(null); setDataLoading(false); return; }
-        const byDate: Record<string, { topo?: typeof data[0]; fundo?: typeof data[0] }> = {};
-        for (const row of data) {
-          if (!byDate[row.date]) byDate[row.date] = {};
-          byDate[row.date][row.funnel_stage as "topo" | "fundo"] = row;
-        }
-        const records: FunnelDailyRecord[] = Object.entries(byDate)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([date, stages]) => {
-            const t = stages.topo;
-            const f = stages.fundo;
-            const invFundo = f?.investimento ?? 0;
-            const convFundo = f?.conversoes ?? 0;
-            const recFundo = f?.receita ?? 0;
-            return {
-              date,
-              investimentoTopo: t?.investimento ?? 0,
-              investimentoFundo: Number(invFundo),
-              alcanceTopo: t?.alcance ?? 0,
-              frequenciaTopo: t?.frequencia ?? 0,
-              impressoesTopo: t?.impressoes ?? 0,
-              conversoesFundo: Number(convFundo),
-              receitaFundo: Number(recFundo),
-              cpaFundo: Number(convFundo) > 0 ? Number(invFundo) / Number(convFundo) : 0,
-              roasFundo: Number(invFundo) > 0 ? Number(recFundo) / Number(invFundo) : 0,
-              indicadorPromocao: 0 as const,
-              trendIndex: 0,
-            };
-          });
-        const totalReceita = records.reduce((s, r) => s + r.receitaFundo, 0);
-        const totalConversoes = records.reduce((s, r) => s + r.conversoesFundo, 0);
-        setIsClickProxy(totalConversoes > 0 && totalReceita === 0);
-        const maxSync = data.reduce((max: string, r: { synced_at: string }) => r.synced_at > max ? r.synced_at : max, data[0].synced_at);
-        setLastSync(maxSync);
-        setRealData(records);
-
-        // Click efficiency — registros de topo
-        const topoRows = data.filter((r: { funnel_stage: string }) => r.funnel_stage === "topo");
-        if (topoRows.length > 0) {
-          const n = topoRows.length;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const sum = (field: string) => topoRows.reduce((s: number, r: any) => s + (r[field] ?? 0), 0);
-          setClickEfficiency({
-            avgCtr: sum("ctr") / n,
-            avgCpm: sum("cpm") / n,
-            avgCpc: sum("cpc") / n,
-            totalUniqueClicks: sum("unique_clicks"),
-            avgUniqueCtr: sum("unique_ctr") / n,
-          });
-        } else {
-          setClickEfficiency(null);
-        }
-
-        // Attribution windows — apenas registros de fundo com dados reais
-        const fundoRows = data.filter((r: { funnel_stage: string }) => r.funnel_stage === "fundo");
-        const c1dc = fundoRows.reduce((s: number, r: { conv_1d_click: number }) => s + (r.conv_1d_click ?? 0), 0);
-        const c7dc = fundoRows.reduce((s: number, r: { conv_7d_click: number }) => s + (r.conv_7d_click ?? 0), 0);
-        const c1dv = fundoRows.reduce((s: number, r: { conv_1d_view: number }) => s + (r.conv_1d_view ?? 0), 0);
-        const c7dv = fundoRows.reduce((s: number, r: { conv_7d_view: number }) => s + (r.conv_7d_view ?? 0), 0);
-        const total = c7dc + c7dv;
-        if (total > 0) {
-          setAttributionSummary({
-            conv1dClick: c1dc, conv7dClick: c7dc, conv1dView: c1dv, conv7dView: c7dv,
-            viewThroughPct: (c7dv / total) * 100,
-            cycleLengthRatio: c7dc > 0 ? c1dc / c7dc : 0,
-          });
-        } else {
-          setAttributionSummary(null);
-        }
-
-        setDataLoading(false);
-      });
-  }, [selectedAccount, selectedPlatform]);
-
-  const funnelData = realData ?? FUNNEL_DAILY_DATA;
+  const funnelData = useMemo(() => realData ?? [], [realData]);
   const hasFundoData = funnelData.some(d => d.conversoesFundo > 0 || d.receitaFundo > 0);
 
   const dataPeriod = funnelData.length > 0 ? {
@@ -322,11 +171,14 @@ export default function PatternIntelligence() {
     }
   }, []);
 
-  const analysis = useMemo(() => runFunnelImpactAnalysis(funnelData, tpiWeights), [funnelData, tpiWeights]);
+  const analysis = useMemo(() => {
+    if (funnelData.length === 0) return null;
+    return runFunnelImpactAnalysis(funnelData, tpiWeights);
+  }, [funnelData, tpiWeights]);
 
   // Tendência: compara primeira metade vs segunda metade do período
   const periodTrend = useMemo(() => {
-    if (funnelData.length < 14) return null;
+    if (!analysis || funnelData.length < 14) return null;
     const mid = Math.floor(funnelData.length / 2);
     const prev = funnelData.slice(0, mid);
     const curr = funnelData.slice(mid);
@@ -338,12 +190,67 @@ export default function PatternIntelligence() {
       elasticidade: delta(currAnalysis.elasticity.elasticity, prevAnalysis.elasticity.elasticity),
       janela: delta(currAnalysis.bestLagModel.lagDays, prevAnalysis.bestLagModel.lagDays),
     };
-  }, [funnelData, tpiWeights]);
+  }, [funnelData, tpiWeights, analysis]);
 
   const simulation = useMemo(() => {
+    if (!analysis) return null;
     const input: SimulationInput = { increaseType: simType, value: simValue };
     return runSimulation(input, funnelData, analysis.bestAdstock.beta1, analysis.tpiSeries);
   }, [simType, simValue, funnelData, analysis]);
+
+  const emptyReason = !hasClient
+    ? "Selecione um cliente no seletor do topo para analisar o funil consolidado (todas as plataformas)."
+    : clientFunnel.error || "Sem dados de funil sincronizados para este cliente.";
+
+  if (!analysis || !simulation) {
+    return (
+      <AppLayout>
+        <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-primary/10">
+                <Activity className="w-6 h-6 text-primary" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-foreground">Pattern Intelligence</h1>
+                <p className="text-sm text-muted-foreground">
+                  Diagnóstico estrutural de funil por cliente · multiplataforma
+                </p>
+              </div>
+            </div>
+            {clientLabel && (
+              <Badge variant="outline" className="text-xs">
+                {clientLabel}
+                {clientFunnel.linkedAccounts.length > 0 && (
+                  <span className="ml-1.5 text-muted-foreground">
+                    · {clientFunnel.linkedAccounts.length} conta{clientFunnel.linkedAccounts.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </Badge>
+            )}
+          </div>
+          <Card className="border-dashed">
+            <CardContent className="py-12 text-center space-y-2">
+              {dataLoading ? (
+                <>
+                  <RefreshCw className="w-8 h-8 mx-auto text-muted-foreground animate-spin" />
+                  <h3 className="font-semibold text-foreground">Carregando funil do cliente…</h3>
+                </>
+              ) : (
+                <>
+                  <Activity className="w-8 h-8 mx-auto text-muted-foreground" />
+                  <h3 className="font-semibold text-foreground">Sem dados para análise</h3>
+                  <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                    {emptyReason}
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </AppLayout>
+    );
+  }
 
   const { bestLagModel, bestAdstock, tpiSeries, incrementalImpact, saturationCurve, elasticity, confidence, executiveSummary } = analysis;
 
@@ -397,39 +304,20 @@ export default function PatternIntelligence() {
             <div>
               <h1 className="text-2xl font-bold text-foreground">Pattern Intelligence</h1>
               <p className="text-sm text-muted-foreground">
-                Diagnóstico Estrutural de Impacto de Funil
+                Diagnóstico estrutural de funil por cliente · multiplataforma
               </p>
             </div>
           </div>
           <div className="flex flex-col items-end gap-1.5">
             <div className="flex items-center gap-2 flex-wrap justify-end">
-            {/* Platform selector */}
-            <Select value={selectedPlatform} onValueChange={(v) => setSelectedPlatform(v as "meta_ads" | "google_ads" | "dv360")}>
-              <SelectTrigger className="w-[130px] h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="meta_ads">Meta Ads</SelectItem>
-                <SelectItem value="google_ads">Google Ads</SelectItem>
-                <SelectItem value="dv360">DV360</SelectItem>
-              </SelectContent>
-            </Select>
-            {/* Account selector */}
-            <Select value={selectedAccount} onValueChange={setSelectedAccount}>
-              <SelectTrigger className="w-[200px] h-8 text-xs">
-                {dataLoading
-                  ? <span className="flex items-center gap-1.5"><RefreshCw className="w-3 h-3 animate-spin" />Carregando...</span>
-                  : <SelectValue placeholder="Fonte de dados" />}
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="mock">Dados de demonstração</SelectItem>
-                {accountsForPlatform.map(acc => (
-                  <SelectItem key={acc.account_id} value={acc.account_id}>
-                    {acc.account_name || acc.account_id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {clientLabel && (
+              <Badge variant="outline" className="text-xs max-w-[240px] truncate">
+                {clientLabel}
+                <span className="ml-1.5 text-muted-foreground font-normal">
+                  · {clientFunnel.linkedAccounts.length} conta{clientFunnel.linkedAccounts.length !== 1 ? "s" : ""}
+                </span>
+              </Badge>
+            )}
             <PITooltip id="confianca">
               <Badge variant="outline" className={`${confMeta.bg} ${confMeta.color} border gap-1.5 px-3 py-1.5 cursor-help`}>
                 <ConfIcon className="w-3.5 h-3.5" />
@@ -453,18 +341,18 @@ export default function PatternIntelligence() {
         {/* Confidence insight */}
         <InsightBanner icon={ShieldCheck} text={confidenceInsight} />
 
-        {/* Aviso: sem pixel de conversão */}
-        {selectedAccount !== "mock" && !hasFundoData && !dataLoading && (
+        {/* Aviso: sem conversões de fundo */}
+        {hasClient && !hasFundoData && !dataLoading && (
           <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
             <Info className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
             <span>
-              Esta conta não possui dados de conversão registrados no Meta Pixel. Os KPIs de impacto requerem eventos de fundo (compras, leads). Os dados de alcance e investimento (topo) estão disponíveis no Mapa Temporal abaixo.
+              Este cliente não possui conversões de fundo classificadas no período. Os KPIs de impacto requerem campanhas de fundo com eventos. Campanhas de topo entram no mapa temporal.
             </span>
           </div>
         )}
 
         {/* Nota discreta: fundo baseado em cliques */}
-        {selectedAccount !== "mock" && isClickProxy && !dataLoading && (
+        {hasClient && isClickProxy && !dataLoading && (
           <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
             <Info className="w-3.5 h-3.5 shrink-0" />
             <span>Fundo baseado em cliques (link_clicks) — conta sem pixel de conversão. CPA e ROAS requerem dados de receita real.</span>
@@ -486,7 +374,7 @@ export default function PatternIntelligence() {
                 <KPICard
                   label="Conversões Incrementais"
                   value={incrementalImpact.incrementalConversions.toLocaleString("pt-BR")}
-                  sub="estimadas no período"
+                  sub="somente purchase (venda)"
                   icon={Target}
                   trend={periodTrend?.conversoes}
                 />
@@ -810,18 +698,21 @@ export default function PatternIntelligence() {
                 <Tag className="w-5 h-5 text-primary" />
                 <CardTitle className="text-lg">Campanhas por Etapa de Funil</CardTitle>
               </div>
-              <p className="text-xs text-muted-foreground">Visão por campanha classificada pelo objetivo do Meta Ads</p>
+              <p className="text-xs text-muted-foreground">
+                Classificação pelo Funnel Role Engine (Meta, Google, DV360 e futuras integrações) — visão consolidada do cliente
+              </p>
             </CardHeader>
             <CardContent>
               <div className="space-y-1">
-                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-4 px-3 pb-1 border-b border-border/30">
+                <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-3 pb-1 border-b border-border/30">
                   <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Campanha</span>
+                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide text-right w-16">Plataforma</span>
                   <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide text-right w-16">Etapa</span>
                   <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide text-right w-20">Investido</span>
                   <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide text-right w-20">Convers.</span>
                 </div>
                 {campaigns.map(c => (
-                  <CampaignRow key={c.campaign_id} campaign={c} />
+                  <CampaignRow key={`${c.platform}__${c.campaign_id}`} campaign={c} />
                 ))}
               </div>
             </CardContent>
@@ -976,17 +867,30 @@ const STAGE_META: Record<string, { label: string; color: string; bg: string }> =
   topo:  { label: "Topo",  color: "text-sky-400",     bg: "bg-sky-400/10 border-sky-400/30" },
   meio:  { label: "Meio",  color: "text-amber-400",   bg: "bg-amber-400/10 border-amber-400/30" },
   fundo: { label: "Fundo", color: "text-emerald-400", bg: "bg-emerald-400/10 border-emerald-400/30" },
+  misto: { label: "Misto", color: "text-violet-400",  bg: "bg-violet-400/10 border-violet-400/30" },
+  indefinido: { label: "N/D", color: "text-muted-foreground", bg: "bg-muted/40 border-border" },
 };
 
-function CampaignRow({ campaign }: { campaign: CampaignSummary }) {
-  const stage = STAGE_META[campaign.funnel_stage] ?? STAGE_META.fundo;
+const PLATFORM_LABEL: Record<string, string> = {
+  meta_ads: "Meta",
+  google_ads: "Google",
+  dv360: "DV360",
+  tiktok_ads: "TikTok",
+  kwai_ads: "Kwai",
+  linkedin_ads: "LinkedIn",
+};
+
+function CampaignRow({ campaign }: { campaign: ClassifiedCampaignSummary }) {
+  const stage = STAGE_META[campaign.funnel_stage] ?? STAGE_META.indefinido;
+  const platformLabel = PLATFORM_LABEL[campaign.platform] ?? campaign.platform;
   return (
-    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-4 px-3 py-2 rounded-lg hover:bg-muted/30 transition-colors items-center">
+    <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-3 py-2 rounded-lg hover:bg-muted/30 transition-colors items-center">
       <div className="min-w-0">
         <p className="text-xs font-medium text-foreground truncate">{campaign.campaign_name}</p>
         {campaign.objective && <p className="text-[10px] text-muted-foreground/60 truncate">{campaign.objective}</p>}
       </div>
-      <Badge variant="outline" className={`text-[10px] px-1.5 py-0.5 w-16 justify-center ${stage.bg} ${stage.color} border`}>
+      <span className="text-[10px] text-muted-foreground text-right w-16 truncate">{platformLabel}</span>
+      <Badge variant="outline" className={`text-[10px] px-1.5 py-0.5 w-16 justify-center ${stage.bg} ${stage.color} border`} title={campaign.evidence.join(" · ")}>
         {stage.label}
       </Badge>
       <span className="text-xs font-mono text-foreground text-right w-20">

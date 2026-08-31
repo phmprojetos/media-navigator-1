@@ -8,53 +8,30 @@ import { generateAlerts } from "@/types/alerts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BarChart3, TrendingUp, Download, Filter, Sparkles, User, Layers, Activity, ChevronDown, ChevronRight } from "lucide-react";
+import { Download, Activity, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
-import { ALL_CAMPAIGNS, type CampaignWithClient } from "@/data/multiClientData";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
+import type { CampaignWithClient } from "@/data/multiClientData";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
-import { isoClassificationMeta, classifyISO } from "@/types/iso";
-
-/* ── Mock Data (replace with real data fetching) ── */
-
-const channelEfficiency = [
-  { channel: "Search", efficiency: 125, savings: 18500, status: "high" },
-  { channel: "Display", efficiency: 108, savings: 8200, status: "neutral" },
-  { channel: "Social", efficiency: 95, savings: -4500, status: "low" },
-  { channel: "Video", efficiency: 118, savings: 12800, status: "high" },
-  { channel: "Native", efficiency: 102, savings: 2100, status: "neutral" },
-];
-
-const teamRanking = [
-  { name: "Maria Santos", efficiency: 128, campaigns: 8, avatar: "MS" },
-  { name: "João Silva", efficiency: 119, campaigns: 12, avatar: "JS" },
-  { name: "Pedro Costa", efficiency: 112, campaigns: 6, avatar: "PC" },
-  { name: "Ana Lima", efficiency: 98, campaigns: 10, avatar: "AL" },
-  { name: "Carlos Reis", efficiency: 92, campaigns: 5, avatar: "CR" },
-];
-
-const aiInsights = [
-  { type: "success", title: "Economia identificada", description: "Campanhas de Search com público lookalike geraram 23% mais eficiência que a média." },
-  { type: "warning", title: "Oportunidade de otimização", description: "Reduzir frequência em campanhas de retargeting pode economizar R$ 8.500/mês." },
-  { type: "insight", title: "Padrão identificado", description: "Criativos em vídeo curto (<15s) convertem 35% melhor no TikTok." },
-];
 
 type GroupBy = "none" | "client" | "dsp" | "campaign";
 
 export default function Efficiency() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
-  const filteredCampaigns = useMemo(() => {
-    let result: CampaignWithClient[] = ALL_CAMPAIGNS;
-    if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
-    if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.campaignId !== "all") result = result.filter(c => c.campaignId === filters.campaignId);
-    if (filters.status !== "all") result = result.filter(c => c.status === filters.status);
-    return result;
-  }, [filters]);
+  const filteredCampaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, filters),
+    [syncedCampaigns, filters]
+  );
 
   const store = useMemo(() => materializeFeatureStore(filteredCampaigns), [filteredCampaigns]);
   const allAlerts = useMemo(() => generateAlerts(filteredCampaigns), [filteredCampaigns]);
@@ -92,7 +69,9 @@ export default function Efficiency() {
         </div>
 
         {/* Global Filters */}
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} />
+
+        {filteredCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* Agency-Level ISO Bar */}
         <AgencyISOBar data={agencyData} iso={iso} />
@@ -117,10 +96,11 @@ export default function Efficiency() {
         </div>
 
         {/* Campaign Trends by Group */}
-        {Object.entries(grouped).map(([groupLabel, campaigns]) => {
+        {filteredCampaigns.length > 0 && Object.entries(grouped).map(([groupLabel, campaigns]) => {
           const isCollapsed = collapsedGroups[groupLabel];
-          const groupAvgEff = Math.round(campaigns.reduce((s, c) => s + c.currentMBEI, 0) / campaigns.length);
-          const groupClassification = classifyISO(Math.round(groupAvgEff * 100 / 150));
+          const groupAvgEff = campaigns.length
+            ? Math.round(campaigns.reduce((s, c) => s + c.currentMBEI, 0) / campaigns.length)
+            : 0;
 
           return (
             <div key={groupLabel} className="space-y-3">
@@ -164,67 +144,6 @@ export default function Efficiency() {
             </div>
           );
         })}
-
-        {/* Channel Efficiency */}
-        <div className="flex flex-col gap-6">
-          <div className="p-6 rounded-xl bg-card border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-foreground">Eficiência por Canal</h2>
-              <Button variant="ghost" size="sm"><Layers className="w-4 h-4 mr-2" />Ver detalhes</Button>
-            </div>
-            <div className="space-y-4">
-              {channelEfficiency.map((channel) => (
-                <div key={channel.channel} className="flex items-center gap-4">
-                  <span className="w-20 text-sm text-muted-foreground">{channel.channel}</span>
-                  <div className="flex-1 h-8 bg-muted rounded-lg overflow-hidden">
-                    <div className={cn("h-full rounded-lg flex items-center justify-end px-3 transition-all", channel.status === "high" && "bg-status-success/20", channel.status === "neutral" && "bg-primary/20", channel.status === "low" && "bg-status-warning/20")} style={{ width: `${Math.min(channel.efficiency, 130)}%` }}>
-                      <span className={cn("text-sm font-semibold", channel.status === "high" && "text-status-success", channel.status === "neutral" && "text-primary", channel.status === "low" && "text-status-warning")}>{channel.efficiency}%</span>
-                    </div>
-                  </div>
-                  <span className={cn("w-24 text-sm font-medium text-right", channel.savings >= 0 ? "text-status-success" : "text-status-error")}>{channel.savings >= 0 ? "+" : ""}R$ {Math.abs(channel.savings).toLocaleString("pt-BR")}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Team & AI */}
-        <div className="flex flex-col gap-6">
-          <div className="p-6 rounded-xl bg-card border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-foreground flex items-center gap-2"><User className="w-4 h-4" />Ranking de Eficiência</h2>
-              <Badge variant="outline" className="text-xs">Por profissional</Badge>
-            </div>
-            <div className="space-y-3">
-              {teamRanking.map((member, index) => (
-                <div key={member.name} className="flex items-center gap-4 p-3 rounded-lg bg-muted/50">
-                  <span className={cn("w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold", index === 0 && "bg-status-success text-background", index === 1 && "bg-primary text-background", index === 2 && "bg-status-warning text-background", index > 2 && "bg-muted text-muted-foreground")}>{index + 1}</span>
-                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-secondary text-xs font-medium">{member.avatar}</div>
-                  <div className="flex-1">
-                    <p className="font-medium text-foreground">{member.name}</p>
-                    <p className="text-xs text-muted-foreground">{member.campaigns} campanhas</p>
-                  </div>
-                  <span className={cn("text-lg font-bold", member.efficiency >= 110 ? "text-status-success" : member.efficiency >= 100 ? "text-primary" : "text-status-warning")}>{member.efficiency}%</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="p-6 rounded-xl bg-card border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-foreground flex items-center gap-2"><Sparkles className="w-4 h-4 text-primary" />Insights da IA</h2>
-              <Button variant="ghost" size="sm">Gerar mais</Button>
-            </div>
-            <div className="space-y-3">
-              {aiInsights.map((insight, index) => (
-                <div key={index} className={cn("p-4 rounded-lg border", insight.type === "success" && "bg-status-success/5 border-status-success/20", insight.type === "warning" && "bg-status-warning/5 border-status-warning/20", insight.type === "insight" && "bg-primary/5 border-primary/20")}>
-                  <h4 className={cn("font-medium mb-1", insight.type === "success" && "text-status-success", insight.type === "warning" && "text-status-warning", insight.type === "insight" && "text-primary")}>{insight.title}</h4>
-                  <p className="text-sm text-muted-foreground">{insight.description}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
       </div>
     </AppLayout>
   );

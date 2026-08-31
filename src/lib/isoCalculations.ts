@@ -33,7 +33,23 @@ export function computeISO(
   const n = campaigns.length;
 
   if (n === 0) {
-    return buildISO(50, 50, 50, 50, 50, 0);
+    return {
+      available: false,
+      score: 0,
+      classification: "indisponivel",
+      classificationLabel: "Sem dados",
+      trend: "stable",
+      trendDelta: 0,
+      components: {
+        performance: 0,
+        efficiency: 0,
+        stability: 0,
+        evolution: 0,
+        operational: 0,
+      },
+      aiSummary:
+        "ISO indisponível: não há campanhas sincronizadas neste filtro. Conecte uma plataforma e sincronize dados para calcular a saúde da operação.",
+    };
   }
 
   // ── 1. Entrega de Resultado (30%) ──
@@ -127,6 +143,7 @@ function buildISO(
     : `Estado crítico. "${componentNames[weakest[0]]}" (${Math.round(weakest[1])}) exige ação imediata para recuperar a saúde da operação.`;
 
   return {
+    available: true,
     score,
     classification,
     classificationLabel: label,

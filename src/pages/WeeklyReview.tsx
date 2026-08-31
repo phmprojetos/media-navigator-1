@@ -7,11 +7,14 @@ import {
   Calendar, TrendingUp, TrendingDown, AlertTriangle, CheckCircle2,
   BarChart3, Target, ArrowUp, ArrowDown, Minus, Brain, Sparkles,
 } from "lucide-react";
-import { ALL_CAMPAIGNS, CLIENTS } from "@/data/multiClientData";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { getMomentumMeta, getMomentumCategory } from "@/lib/efficiencyCalculations";
 import { generateAlerts } from "@/types/alerts";
 import { cn } from "@/lib/utils";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { displayClientName, useClient } from "@/contexts/ClientContext";
 import { inferFunnelStage } from "@/lib/aiCopilotEngine";
 import { FUNNEL_STAGE_META, FUNNEL_STAGES } from "@/types/aiCopilot";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
@@ -21,15 +24,15 @@ import { materializeFeatureStore } from "@/lib/featureStoreHub";
 const PREVIOUS_WEEK_FACTOR = 0.94;
 
 export default function WeeklyReview() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, selectedClientId, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
+  const clientOptions = clients.map(c => ({ id: c.id, name: displayClientName(c) }));
 
-  const campaigns = useMemo(() => {
-    let result = ALL_CAMPAIGNS.filter(c => c.status === "active");
-    if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
-    if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.campaignId !== "all") result = result.filter(c => c.campaignId === filters.campaignId);
-    return result;
-  }, [filters]);
+  const campaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, filters, { activeOnly: true }),
+    [syncedCampaigns, filters]
+  );
 
   // ── SINGLE SOURCE OF TRUTH: Feature Store Hub ──
   const store = useMemo(() => materializeFeatureStore(campaigns), [campaigns]);
@@ -57,7 +60,7 @@ export default function WeeklyReview() {
 
   // Client performance ranking
   const clientPerf = useMemo(() => {
-    return CLIENTS.map(client => {
+    return clientOptions.map(client => {
       const clientCamps = campaigns.filter(c => c.clientId === client.id);
       if (clientCamps.length === 0) return null;
       const avgMBEI = Math.round(clientCamps.reduce((s, c) => s + c.currentMBEI, 0) / clientCamps.length);
@@ -67,7 +70,7 @@ export default function WeeklyReview() {
       const change = avgMBEI - prevAvgMBEI;
       return { ...client, avgMBEI, momentum: category, change, delta };
     }).filter(Boolean) as { id: string; name: string; avgMBEI: number; momentum: string; change: number; delta: number }[];
-  }, [campaigns]);
+  }, [campaigns, clientOptions]);
 
   const topImproving = [...clientPerf].sort((a, b) => b.change - a.change).slice(0, 3);
   const topDeclining = [...clientPerf].sort((a, b) => a.change - b.change).slice(0, 3);
@@ -93,7 +96,9 @@ export default function WeeklyReview() {
         </div>
 
         {/* Filters */}
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* Week-over-Week KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

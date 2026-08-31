@@ -14,9 +14,64 @@ export type Database = {
   }
   public: {
     Tables: {
+      agencies: {
+        Row: {
+          admin_email: string | null
+          created_at: string
+          id: string
+          is_platform: boolean
+          name: string
+          onboarding_status: string
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          admin_email?: string | null
+          created_at?: string
+          id?: string
+          is_platform?: boolean
+          name: string
+          onboarding_status?: string
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          admin_email?: string | null
+          created_at?: string
+          id?: string
+          is_platform?: boolean
+          name?: string
+          onboarding_status?: string
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      agency_members: {
+        Row: {
+          agency_id: string
+          created_at: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          agency_id: string
+          created_at?: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          agency_id?: string
+          created_at?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       clients: {
         Row: {
           address: string | null
+          agency_id: string | null
           bairro: string | null
           city: string | null
           cnpj: string | null
@@ -30,6 +85,7 @@ export type Database = {
           cpf: string | null
           created_at: string
           data_fundacao: string | null
+          document_type: string
           email_contato: string | null
           id: string
           id_estrangeiro: string | null
@@ -48,6 +104,7 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          agency_id?: string | null
           bairro?: string | null
           city?: string | null
           cnpj?: string | null
@@ -61,6 +118,7 @@ export type Database = {
           cpf?: string | null
           created_at?: string
           data_fundacao?: string | null
+          document_type?: string
           email_contato?: string | null
           id?: string
           id_estrangeiro?: string | null
@@ -79,6 +137,7 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          agency_id?: string | null
           bairro?: string | null
           city?: string | null
           cnpj?: string | null
@@ -92,6 +151,7 @@ export type Database = {
           cpf?: string | null
           created_at?: string
           data_fundacao?: string | null
+          document_type?: string
           email_contato?: string | null
           id?: string
           id_estrangeiro?: string | null
@@ -517,7 +577,19 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      provision_agency: {
+        Args: {
+          p_agency_name: string
+          p_admin_email: string
+          p_admin_name?: string | null
+          p_admin_password?: string | null
+        }
+        Returns: Json
+      }
+      is_platform_ops: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "admin" | "gestor" | "operador" | "super_admin"

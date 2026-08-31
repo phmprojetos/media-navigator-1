@@ -6,9 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DollarSign, TrendingUp, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, Download, PiggyBank, Target, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ALL_CAMPAIGNS, CLIENTS, type CampaignWithClient } from "@/data/multiClientData";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { MARGIN_THRESHOLD, type ClientProfitability } from "@/types/financials";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
 import { materializeFeatureStore } from "@/lib/featureStoreHub";
 
@@ -16,17 +19,16 @@ type SortField = "name" | "margin" | "revenue" | "mbei" | "spend" | "alerts";
 type SortDir = "asc" | "desc";
 
 export default function FinancialOverview() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
   const [sortField, setSortField] = useState<SortField>("margin");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  const filteredCampaigns = useMemo(() => {
-    let result: CampaignWithClient[] = ALL_CAMPAIGNS;
-    if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
-    if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.status !== "all") result = result.filter(c => c.status === filters.status);
-    return result;
-  }, [filters]);
+  const filteredCampaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, { ...filters, campaignId: "all" }),
+    [syncedCampaigns, filters]
+  );
 
   // ── Feature Store Hub (SSoT) ──
   const store = useMemo(() => materializeFeatureStore(filteredCampaigns), [filteredCampaigns]);
@@ -85,7 +87,9 @@ export default function FinancialOverview() {
           <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-2" />Exportar</Button>
         </div>
 
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} showStatus={false} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} showStatus={false} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* Agency KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

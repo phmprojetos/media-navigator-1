@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getUserAgencyContext, oauthAppPath } from "../_shared/tenant.ts";
 
 const GOOGLE_ADS_API_VERSION = "v22";
 
@@ -15,10 +16,10 @@ interface GoogleTokenResponse {
 // de Edge Function, então HTML/script inline aqui nunca roda. Por isso sempre redirecionamos
 // de volta pro nosso próprio domínio — lá sim (no DataIntegrations.tsx) é que detectamos se
 // essa aba é o popup (via window.opener) e fechamos ela com postMessage.
-function popupResult(base: string, ok: boolean, code: string): Response {
+function popupResult(base: string, appPath: string, ok: boolean, code: string): Response {
   try {
     const dest = new URL(
-      `/data-integrations?${ok ? "connected=google_ads" : `google_error=${encodeURIComponent(code)}`}`,
+      `${appPath}?${ok ? "connected=google_ads" : `google_error=${encodeURIComponent(code)}`}`,
       base
     );
     return Response.redirect(dest.toString(), 302);
@@ -59,9 +60,11 @@ Deno.serve(async (req) => {
   }
 
   const base = redirectOrigin;
+  const tenant = userId ? await getUserAgencyContext(supabase, userId) : { agencyId: null, onboardingPending: false };
+  const appPath = oauthAppPath(tenant.onboardingPending);
 
   if (oauthError || !code || !userId) {
-    return popupResult(base, false, oauthError || "invalid_state");
+    return popupResult(base, appPath, false, oauthError || "invalid_state");
   }
 
   try {
@@ -86,7 +89,7 @@ Deno.serve(async (req) => {
 
     if (!tokenRes.ok || !tokenData.access_token) {
       console.error("Erro ao trocar code por token:", tokenData);
-      return popupResult(base, false, "token_exchange_failed");
+      return popupResult(base, appPath, false, "token_exchange_failed");
     }
 
     const accessToken = tokenData.access_token;
@@ -167,6 +170,7 @@ Deno.serve(async (req) => {
           token_expires_at: expiresAt,
           scopes: tokenData.scope ?? null,
           status: "active",
+          ...(tenant.agencyId ? { agency_id: tenant.agencyId } : {}),
         }))
       : [{
           user_id: userId,
@@ -179,6 +183,7 @@ Deno.serve(async (req) => {
           token_expires_at: expiresAt,
           scopes: tokenData.scope ?? null,
           status: "active",
+          ...(tenant.agencyId ? { agency_id: tenant.agencyId } : {}),
         }];
 
     // Contas novas entram com is_selected=false (o usuário ainda não escolheu usá-las) —
@@ -209,12 +214,12 @@ Deno.serve(async (req) => {
 
     if (upsertError) {
       console.error("Erro ao salvar platform_connections:", upsertError);
-      return popupResult(base, false, "save_failed");
+      return popupResult(base, appPath, false, "save_failed");
     }
 
-    return popupResult(base, true, "connected");
+    return popupResult(base, appPath, true, "connected");
   } catch (e) {
     console.error("Erro em google-oauth-callback:", e);
-    return popupResult(base, false, "internal_error");
+    return popupResult(base, appPath, false, "internal_error");
   }
 });

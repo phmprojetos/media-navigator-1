@@ -13,8 +13,11 @@ import {
   Zap, Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
-import { ALL_CAMPAIGNS, CLIENTS, type CampaignWithClient } from "@/data/multiClientData";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { materializeFeatureStore } from "@/lib/featureStoreHub";
 import { generateAlerts } from "@/types/alerts";
 import { getMomentumMeta } from "@/lib/efficiencyCalculations";
@@ -24,7 +27,7 @@ import { computeAdoptionImpact } from "@/lib/operationalCalculations";
 import { PATTERN_TYPE_META } from "@/types/patternLearning";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
 import { MetricTooltip } from "@/components/intelligence/MetricTooltip";
-import { isoClassificationMeta, ISO_COMPONENT_LABELS } from "@/types/iso";
+import { isoClassificationMeta, ISO_COMPONENT_LABELS, formatISOScore } from "@/types/iso";
 
 /* ─── Block wrapper with expand/collapse + contextual help ─── */
 
@@ -135,15 +138,14 @@ function MiniKPI({ label, value, icon: Icon, color, metricKey }: { label: string
 /* ─── Main Page ─── */
 
 export default function IntelligenceOverview() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
 
-  const filteredCampaigns = useMemo(() => {
-    let result: CampaignWithClient[] = ALL_CAMPAIGNS.filter(c => c.status === "active");
-    if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
-    if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.campaignId !== "all") result = result.filter(c => c.campaignId === filters.campaignId);
-    return result;
-  }, [filters]);
+  const filteredCampaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, filters, { activeOnly: true }),
+    [syncedCampaigns, filters]
+  );
 
   const store = useMemo(() => materializeFeatureStore(filteredCampaigns), [filteredCampaigns]);
   const alerts = useMemo(() => generateAlerts(filteredCampaigns), [filteredCampaigns]);
@@ -189,7 +191,9 @@ export default function IntelligenceOverview() {
         </div>
 
         {/* Global Filter */}
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* ═══ ISO — Índice de Saúde da Operação (TOPO) ═══ */}
         <Card className={cn("border-2", isoMeta.border)}>
@@ -208,19 +212,20 @@ export default function IntelligenceOverview() {
               </div>
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <p className={cn("text-4xl font-bold tabular-nums", isoMeta.color)}>{iso.score}</p>
-                  <p className="text-xs text-muted-foreground">/100</p>
+                  <p className={cn("text-4xl font-bold tabular-nums", isoMeta.color)}>{formatISOScore(iso)}</p>
+                  {iso.available && <p className="text-xs text-muted-foreground">/100</p>}
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <Badge className={cn("text-xs border", isoMeta.bg, isoMeta.color, isoMeta.border)}>{iso.classificationLabel}</Badge>
-                  <span className={cn("text-xs font-medium", iso.trend === "up" ? "text-status-success" : iso.trend === "down" ? "text-status-error" : "text-muted-foreground")}>
-                    {iso.trend === "up" ? "↑" : iso.trend === "down" ? "↓" : "→"} {iso.trendDelta >= 0 ? "+" : ""}{iso.trendDelta}%
-                  </span>
+                  {iso.available && (
+                    <span className={cn("text-xs font-medium", iso.trend === "up" ? "text-status-success" : iso.trend === "down" ? "text-status-error" : "text-muted-foreground")}>
+                      {iso.trend === "up" ? "↑" : iso.trend === "down" ? "↓" : "→"} {iso.trendDelta >= 0 ? "+" : ""}{iso.trendDelta}%
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* AI Summary */}
             <div className="p-3 rounded-lg bg-primary/5 border border-primary/10 mb-4">
               <div className="flex items-start gap-2">
                 <Brain className="w-3.5 h-3.5 text-primary mt-0.5 flex-shrink-0" />
@@ -228,31 +233,32 @@ export default function IntelligenceOverview() {
               </div>
             </div>
 
-            {/* ISO Components */}
-            <div className="grid grid-cols-5 gap-3">
-              {(Object.entries(iso.components) as [keyof typeof iso.components, number][]).map(([key, value]) => {
-                const comp = ISO_COMPONENT_LABELS[key];
-                const metricKeys: Record<string, string> = {
-                  performance: "iso_performance",
-                  efficiency: "iso_efficiency",
-                  stability: "iso_stability",
-                  evolution: "iso_evolution",
-                  operational: "iso_operational",
-                };
-                return (
-                  <div key={key} className="space-y-1 p-2 rounded-lg bg-muted/30">
-                    <div className="flex items-center justify-between">
-                      <MetricTooltip metricKey={metricKeys[key]}>
-                        <span className="text-[10px] text-muted-foreground">{comp.label}</span>
-                      </MetricTooltip>
-                      <span className="text-xs font-bold text-foreground">{value}</span>
+            {iso.available && (
+              <div className="grid grid-cols-5 gap-3">
+                {(Object.entries(iso.components) as [keyof typeof iso.components, number][]).map(([key, value]) => {
+                  const comp = ISO_COMPONENT_LABELS[key];
+                  const metricKeys: Record<string, string> = {
+                    performance: "iso_performance",
+                    efficiency: "iso_efficiency",
+                    stability: "iso_stability",
+                    evolution: "iso_evolution",
+                    operational: "iso_operational",
+                  };
+                  return (
+                    <div key={key} className="space-y-1 p-2 rounded-lg bg-muted/30">
+                      <div className="flex items-center justify-between">
+                        <MetricTooltip metricKey={metricKeys[key]}>
+                          <span className="text-[10px] text-muted-foreground">{comp.label}</span>
+                        </MetricTooltip>
+                        <span className="text-xs font-bold text-foreground">{value}</span>
+                      </div>
+                      <Progress value={value} className="h-1" />
+                      <span className="text-[9px] text-muted-foreground">{comp.weight}</span>
                     </div>
-                    <Progress value={value} className="h-1" />
-                    <span className="text-[9px] text-muted-foreground">{comp.weight}</span>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -268,7 +274,7 @@ export default function IntelligenceOverview() {
           badge={<Badge variant="outline" className={cn("text-xs", momentumMeta.color)}>{momentumMeta.arrow} {momentumMeta.label}</Badge>}
         >
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <MiniKPI label="ISO" value={iso.score} icon={Activity} color={isoMeta.color} metricKey="iso_score" />
+            <MiniKPI label="ISO" value={formatISOScore(iso)} icon={Activity} color={isoMeta.color} metricKey="iso_score" />
             <MiniKPI label="Campanhas Ativas" value={filteredCampaigns.length} icon={Target} metricKey="active_campaigns" />
             <MiniKPI label="Em Risco" value={campaignsAtRisk.length} icon={ShieldAlert} color="text-status-error" metricKey="at_risk_campaigns" />
             <MiniKPI label="Alertas Críticos" value={criticalAlerts.length} icon={AlertTriangle} color={criticalAlerts.length > 0 ? "text-status-error" : "text-status-success"} metricKey="critical_alerts" />

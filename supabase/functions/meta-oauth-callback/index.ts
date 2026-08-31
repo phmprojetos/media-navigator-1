@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getUserAgencyContext, oauthAppPath } from "../_shared/tenant.ts";
 
 const META_OAUTH_VERSION = "v21.0";
 
@@ -104,26 +105,19 @@ Deno.serve(async (req) => {
     const adAccountsData = (await adAccountsRes.json()) as { data?: MetaAdAccount[] };
     const adAccounts = adAccountsData.data ?? [];
 
+    const tenant = await getUserAgencyContext(supabase, userId);
+    const appPath = oauthAppPath(tenant.onboardingPending);
+
     const rows = adAccounts.length > 0
       ? adAccounts.map((acc) => ({
-          user_id: userId,
-          platform: "meta_ads",
-          account_id: acc.id,
-          account_name: acc.name,
-          access_token: accessToken,
-          token_expires_at: expiresAt,
-          scopes: tokenData.scope ?? null,
-          status: "active",
+          user_id: userId, platform: "meta_ads", account_id: acc.id, account_name: acc.name,
+          access_token: accessToken, token_expires_at: expiresAt, scopes: tokenData.scope ?? null,
+          status: "active", ...(tenant.agencyId ? { agency_id: tenant.agencyId } : {}),
         }))
       : [{
-          user_id: userId,
-          platform: "meta_ads",
-          account_id: "pending",
-          account_name: null,
-          access_token: accessToken,
-          token_expires_at: expiresAt,
-          scopes: tokenData.scope ?? null,
-          status: "active",
+          user_id: userId, platform: "meta_ads", account_id: "pending", account_name: null,
+          access_token: accessToken, token_expires_at: expiresAt, scopes: tokenData.scope ?? null,
+          status: "active", ...(tenant.agencyId ? { agency_id: tenant.agencyId } : {}),
         }];
 
     // Contas novas entram com is_selected=false (o usuário ainda não escolheu usá-las) —
@@ -154,10 +148,10 @@ Deno.serve(async (req) => {
 
     if (upsertError) {
       console.error("Erro ao salvar platform_connections:", upsertError);
-      return redirectOrFallback(base, "/data-integrations?meta_error=save_failed");
+      return redirectOrFallback(base, `${appPath}?meta_error=save_failed`);
     }
 
-    return redirectOrFallback(base, "/data-integrations?connected=meta_ads");
+    return redirectOrFallback(base, `${appPath}?connected=meta_ads`);
   } catch (e) {
     console.error("Erro em meta-oauth-callback:", e);
     return redirectOrFallback(base, "/data-integrations?meta_error=internal_error");

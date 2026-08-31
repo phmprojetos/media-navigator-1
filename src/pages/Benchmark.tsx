@@ -6,12 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { BarChart3, Target, Users, ShieldAlert, ArrowUpDown, ChevronUp, ChevronDown, Download, Activity, Gauge, TrendingUp, DollarSign, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ALL_CAMPAIGNS, CLIENTS, type CampaignWithClient } from "@/data/multiClientData";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { MARGIN_THRESHOLD } from "@/types/financials";
 import { generateAlerts } from "@/types/alerts";
 import { getMomentumMeta, getMomentumCategory } from "@/lib/efficiencyCalculations";
 import { getPercentile, riskLevelMeta, percentileMeta } from "@/lib/benchmarkCalculations";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { displayClientName, useClient } from "@/contexts/ClientContext";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
 import { materializeFeatureStore } from "@/lib/featureStoreHub";
 
@@ -20,19 +23,19 @@ type DspSortField = "efficiency" | "cpa" | "spend" | "alerts";
 type SortDir = "asc" | "desc";
 
 export default function Benchmark() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, selectedClientId, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
+  const clientOptions = clients.map(c => ({ id: c.id, name: displayClientName(c) }));
   const [clientSort, setClientSort] = useState<ClientSortField>("efficiency");
   const [clientSortDir, setClientSortDir] = useState<SortDir>("desc");
   const [dspSort, setDspSort] = useState<DspSortField>("efficiency");
   const [dspSortDir, setDspSortDir] = useState<SortDir>("desc");
 
-  const filteredCampaigns = useMemo(() => {
-    let result: CampaignWithClient[] = ALL_CAMPAIGNS;
-    if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
-    if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.status !== "all") result = result.filter(c => c.status === filters.status);
-    return result;
-  }, [filters]);
+  const filteredCampaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, { ...filters, campaignId: "all" }),
+    [syncedCampaigns, filters]
+  );
 
   const allAlerts = useMemo(() => generateAlerts(filteredCampaigns), [filteredCampaigns]);
 
@@ -43,7 +46,7 @@ export default function Benchmark() {
 
   // Client ranking with risk scores — from Feature Store
   const clientRanking = useMemo(() => {
-    return CLIENTS.map(client => {
+    return clientOptions.map(client => {
       const campaigns = filteredCampaigns.filter(c => c.clientId === client.id);
       if (campaigns.length === 0) return null;
       const avgMBEI = Math.round(campaigns.reduce((s, c) => s + c.currentMBEI, 0) / campaigns.length);
@@ -56,7 +59,7 @@ export default function Benchmark() {
       const risk = store.clientRiskScores.get(client.id) || { score: 0, level: "low" };
       return { ...client, avgMBEI, momentum: category, momentumDelta: delta, marginPercent, alerts, spend, risk };
     }).filter(Boolean) as any[];
-  }, [filteredCampaigns, allAlerts, profitabilities, store]);
+  }, [filteredCampaigns, allAlerts, profitabilities, store, clientOptions]);
 
   const sortedClients = useMemo(() => {
     const sorted = [...clientRanking].sort((a, b) => {
@@ -143,7 +146,9 @@ export default function Benchmark() {
           <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-2" />Exportar</Button>
         </div>
 
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} showStatus={false} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} showStatus={false} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* Agency Benchmarks */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">

@@ -4,19 +4,15 @@ import { Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
 
 export default function Login() {
-  const { signIn, signUp, resetPasswordForEmail } = useAuth();
+  const { signIn, resetPasswordForEmail } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
-  const [name, setName] = useState("");
+  const [mode, setMode] = useState<"login" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
-  const [emailSent, setEmailSent] = useState(false);
   const [resetEmailSent, setResetEmailSent] = useState(false);
 
   async function handleForgotPassword(e: React.FormEvent) {
@@ -35,7 +31,6 @@ export default function Login() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    setInfo("");
     setLoading(true);
 
     try {
@@ -50,25 +45,6 @@ export default function Login() {
             setError(error.message);
         } else {
           navigate("/");
-        }
-      } else if (mode === "signup") {
-        const { error } = await signUp(email, password, name);
-        if (error) {
-          setError(error.message);
-        } else {
-          setEmailSent(true);
-        }
-      } else {
-        // forgot password
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/reset-password`,
-        });
-        if (error) {
-          setError(error.message);
-        } else {
-          setInfo(
-            "Se este email estiver cadastrado, você receberá um link para redefinir sua senha em instantes."
-          );
         }
       }
     } finally {
@@ -89,30 +65,13 @@ export default function Login() {
 
         {/* Card */}
         <div className="bg-card border border-border rounded-2xl p-8 space-y-6">
-          {emailSent && (
-            <div className="text-center space-y-3 py-4">
-              <div className="text-4xl">📧</div>
-              <h2 className="text-lg font-semibold text-foreground">Verifique seu email</h2>
-              <p className="text-sm text-muted-foreground">
-                Enviamos um link de confirmação para <span className="text-foreground font-medium">{email}</span>.
-                <br />Clique no link para ativar sua conta e entrar.
-              </p>
-              <button
-                onClick={() => { setEmailSent(false); setMode("login"); }}
-                className="text-sm text-primary hover:underline mt-2"
-              >
-                Voltar para o login
-              </button>
-            </div>
-          )}
-          {!emailSent && resetEmailSent && (
+          {resetEmailSent ? (
             <div className="text-center space-y-3 py-4">
               <div className="text-4xl">📧</div>
               <h2 className="text-lg font-semibold text-foreground">Verifique seu email</h2>
               <p className="text-sm text-muted-foreground">
                 Se houver uma conta com o email <span className="text-foreground font-medium">{email}</span>,
                 enviamos um link para redefinir sua senha.
-                <br />Clique no link recebido para escolher uma nova senha.
               </p>
               <button
                 onClick={() => { setResetEmailSent(false); setMode("login"); setError(""); }}
@@ -121,22 +80,15 @@ export default function Login() {
                 Voltar para o login
               </button>
             </div>
-          )}
-          {!emailSent && !resetEmailSent && (
+          ) : (
             <>
               <div>
                 <h1 className="text-xl font-semibold text-foreground">
-                  {mode === "login"
-                    ? "Entrar na plataforma"
-                    : mode === "signup"
-                    ? "Criar conta"
-                    : "Recuperar senha"}
+                  {mode === "login" ? "Entrar na plataforma" : "Recuperar senha"}
                 </h1>
                 <p className="text-sm text-muted-foreground mt-1">
                   {mode === "login"
-                    ? "Acesse com seu email e senha"
-                    : mode === "signup"
-                    ? "Preencha os dados para começar"
+                    ? "Acesso provisionado pela operação. Use o e-mail e a senha que você recebeu."
                     : "Informe seu email para receber o link de redefinição"}
                 </p>
               </div>
@@ -153,31 +105,29 @@ export default function Login() {
                       required
                     />
                   </div>
-                )}
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-foreground">Email</label>
-                  <Input
-                    type="email"
-                    placeholder="seu@email.com"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    required
-                  />
-                </div>
-                {mode !== "forgot" && (
+                  {error && (
+                    <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-lg">
+                      {error}
+                    </p>
+                  )}
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading ? "Aguarde..." : "Enviar link de recuperação"}
+                  </Button>
+                </form>
+              ) : (
+                <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-foreground">Senha</label>
-                      {mode === "login" && (
-                        <button
-                          type="button"
-                          onClick={() => { setMode("forgot"); setError(""); setInfo(""); }}
-                          className="text-xs text-primary hover:underline"
-                        >
-                          Esqueci minha senha
-                        </button>
-                      )}
-                    </div>
+                    <label className="text-sm font-medium text-foreground">Email</label>
+                    <Input
+                      type="email"
+                      placeholder="seu@email.com"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-foreground">Senha</label>
                     <Input
                       type="password"
                       placeholder="••••••••"
@@ -187,60 +137,34 @@ export default function Login() {
                       minLength={6}
                     />
                   </div>
-                )}
-                {error && (
-                  <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-lg">
-                    {error}
-                  </p>
-                )}
-                {info && (
-                  <p className="text-sm text-foreground bg-primary/10 px-3 py-2 rounded-lg">
-                    {info}
-                  </p>
-                )}
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading
-                    ? "Aguarde..."
-                    : mode === "login"
-                    ? "Entrar"
-                    : mode === "signup"
-                    ? "Criar conta"
-                    : "Enviar link de recuperação"}
-                </Button>
-              </form>
-
-              <div className="text-center text-sm text-muted-foreground">
-                {mode === "login" && (
-                  <>
-                    Não tem conta?{" "}
-                    <button
-                      onClick={() => { setMode("signup"); setError(""); setInfo(""); }}
-                      className="text-primary hover:underline font-medium"
-                    >
-                      Criar conta
-                    </button>
-                  </>
-                )}
-                {mode === "signup" && (
-                  <>
-                    Já tem conta?{" "}
-                    <button
-                      onClick={() => { setMode("login"); setError(""); setInfo(""); }}
-                      className="text-primary hover:underline font-medium"
-                    >
-                      Entrar
-                    </button>
-                  </>
-                )}
-                {mode === "forgot" && (
+                  {error && (
+                    <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-lg">
+                      {error}
+                    </p>
+                  )}
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading ? "Aguarde..." : "Entrar"}
+                  </Button>
                   <button
-                    onClick={() => { setMode("login"); setError(""); setInfo(""); }}
+                    type="button"
+                    onClick={() => { setMode("forgot"); setError(""); }}
+                    className="block w-full text-center text-sm text-primary hover:underline"
+                  >
+                    Esqueci minha senha
+                  </button>
+                </form>
+              )}
+
+              {mode === "forgot" && (
+                <div className="text-center text-sm text-muted-foreground">
+                  <button
+                    onClick={() => { setMode("login"); setError(""); }}
                     className="text-primary hover:underline font-medium"
                   >
                     Voltar para o login
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </>
           )}
         </div>

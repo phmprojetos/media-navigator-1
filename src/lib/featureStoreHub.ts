@@ -106,7 +106,7 @@ import { getMomentumCategory } from "@/lib/efficiencyCalculations";
 import { CLIENT_FINANCIALS } from "@/data/clientFinancials";
 import { CLIENT_TARGETS } from "@/data/operationalData";
 import { generateAlerts } from "@/types/alerts";
-import { MOCK_LEARNED_PATTERNS } from "@/data/patternLearningData";
+import { LEARNED_PATTERNS } from "@/data/patternLearningData";
 
 // ── Cache ──
 
@@ -200,7 +200,7 @@ export function materializeFeatureStore(
   });
 
   // ── 6. Pattern Signals ──
-  const learnedPatterns = MOCK_LEARNED_PATTERNS;
+  const learnedPatterns = LEARNED_PATTERNS;
 
   // ── 7. Behavioral Signals ──
   const recommendations = generateRecommendations(campaigns, alerts, campaignForecasts);

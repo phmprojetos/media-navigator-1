@@ -14,6 +14,8 @@ import { Client, createEmptyClient, DEFAULT_REBATE_TIERS } from "@/types/client"
 import { formatCNPJ, formatPhone, formatStateRegistration, formatMunicipalRegistration, formatCEP } from "@/lib/inputMasks";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
 import { supabase } from "@/integrations/supabase/client";
+import { useClient } from "@/contexts/ClientContext";
+import { useAgency } from "@/hooks/useAgency";
 
 // Map Supabase row → Client
 function rowToClient(row: Record<string, unknown>): Client {
@@ -63,6 +65,8 @@ function clientToRow(c: Client) {
 
 export default function Clients() {
   const navigate = useNavigate();
+  const { refreshClients } = useClient();
+  const { agencyId } = useAgency();
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -104,7 +108,10 @@ export default function Clients() {
       toast.error("Preencha os campos obrigatórios");
       return;
     }
-    const payload = clientToRow(formData);
+    const payload = {
+      ...clientToRow(formData),
+      ...(agencyId ? { agency_id: agencyId } : {}),
+    };
 
     if (editingClient) {
       const { error } = await supabase
@@ -125,6 +132,7 @@ export default function Clients() {
     setEditingClient(null);
     setFormData(createEmptyClient());
     fetchClients();
+    void refreshClients();
   };
 
   const handleDelete = async (id: string) => {
@@ -133,6 +141,7 @@ export default function Clients() {
     if (error) { toast.error("Erro ao excluir cliente"); return; }
     toast.success("Cliente excluído com sucesso!");
     fetchClients();
+    void refreshClients();
   };
 
   const updateField = <K extends keyof Client>(field: K, value: Client[K]) => {

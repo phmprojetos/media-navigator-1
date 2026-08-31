@@ -4,11 +4,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Crown, TrendingUp, TrendingDown, DollarSign, AlertTriangle, BarChart3, Target, Users, Shield, ArrowUpDown, ChevronUp, ChevronDown, X, Zap, Activity, PiggyBank, ShieldAlert } from "lucide-react";
-import { ALL_CAMPAIGNS, CLIENTS, type CampaignWithClient } from "@/data/multiClientData";
+import type { CampaignWithClient } from "@/data/multiClientData";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { getMomentumMeta, getMomentumCategory } from "@/lib/efficiencyCalculations";
 import { cn } from "@/lib/utils";
 import { generateAlerts } from "@/types/alerts";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { displayClientName, useClient } from "@/contexts/ClientContext";
 import { MARGIN_THRESHOLD, type ClientProfitability } from "@/types/financials";
 import { riskLevelMeta } from "@/lib/benchmarkCalculations";
 import { forecastStatusMeta } from "@/lib/forecastCalculations";
@@ -28,7 +32,7 @@ function computeSavings(campaigns: CampaignWithClient[]) {
 }
 
 function computeTotalSpend(campaigns: CampaignWithClient[]) {
-  return campaigns.reduce((s, c) => s + c.rollingCPA * 500 * c.spendVelocity, 0);
+  return campaigns.reduce((s, c) => s + (c.spend ?? c.rollingCPA * 500 * c.spendVelocity), 0);
 }
 
 function getRiskLevel(mbei: number, momentum: string, criticalAlerts: number): "green" | "yellow" | "orange" | "red" {
@@ -46,7 +50,10 @@ const riskColors = {
 };
 
 export default function ExecutiveDashboard() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, selectedClientId, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
+  const clientOptions = clients.map(c => ({ id: c.id, name: displayClientName(c) }));
   const [sortField, setSortField] = useState<SortField>("mbei");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [drillClient, setDrillClient] = useState<string | null>(null);
@@ -57,14 +64,10 @@ export default function ExecutiveDashboard() {
     return filters;
   }, [filters, drillClient]);
 
-  const filteredCampaigns = useMemo(() => {
-    let result: CampaignWithClient[] = ALL_CAMPAIGNS;
-    if (effectiveFilters.clientId !== "all") result = result.filter(c => c.clientId === effectiveFilters.clientId);
-    if (effectiveFilters.platform !== "all") result = result.filter(c => c.platform === effectiveFilters.platform);
-    if (effectiveFilters.campaignId !== "all") result = result.filter(c => c.campaignId === effectiveFilters.campaignId);
-    if (effectiveFilters.status !== "all") result = result.filter(c => c.status === effectiveFilters.status);
-    return result;
-  }, [effectiveFilters]);
+  const filteredCampaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, effectiveFilters),
+    [syncedCampaigns, effectiveFilters]
+  );
 
   // ── Feature Store Hub (SSoT) ──
   const store = useMemo(() => materializeFeatureStore(filteredCampaigns), [filteredCampaigns]);
@@ -128,7 +131,7 @@ export default function ExecutiveDashboard() {
 
   // Client stats
   const clientStats = useMemo(() => {
-    const clients = drillClient ? CLIENTS.filter(c => c.id === drillClient) : CLIENTS;
+    const clients = drillClient ? clientOptions.filter(c => c.id === drillClient) : clientOptions;
     return clients.map(client => {
       const campaigns = filteredCampaigns.filter(c => c.clientId === client.id);
       if (campaigns.length === 0) return null;
@@ -142,7 +145,7 @@ export default function ExecutiveDashboard() {
       const risk = getRiskLevel(avgMBEI, category, critical);
       return { ...client, campaigns: campaigns.length, avgMBEI, momentum: category, momentumDelta: delta, activeAlerts: alerts.length, criticalAlerts: critical, spend, savings, risk };
     }).filter(Boolean) as NonNullable<ReturnType<typeof Array.prototype.map>[number]>[];
-  }, [filteredCampaigns, allAlerts, drillClient]);
+  }, [filteredCampaigns, allAlerts, drillClient, clientOptions]);
 
   const sortedClientStats = useMemo(() => {
     const sorted = [...clientStats];
@@ -210,11 +213,13 @@ export default function ExecutiveDashboard() {
         </div>
 
         {/* Global Filters */}
-        <GlobalFilterBar filters={filters} onFiltersChange={f => { setFilters(f); setDrillClient(null); }} campaigns={ALL_CAMPAIGNS} />
+        <GlobalFilterBar filters={filters} onFiltersChange={f => { setFilters(f); setDrillClient(null); }} campaigns={syncedCampaigns} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {drillClient && (
           <Badge className="bg-primary/10 text-primary border-primary/20">
-            Drill-down: {CLIENTS.find(c => c.id === drillClient)?.name}
+            Drill-down: {clientOptions.find(c => c.id === drillClient)?.name}
           </Badge>
         )}
 
@@ -239,7 +244,7 @@ export default function ExecutiveDashboard() {
                 <div>
                   <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Verba Gerenciada</p>
                   <p className="text-2xl font-bold text-foreground tabular-nums">{formatCurrency(totalSpend)}</p>
-                  <p className="text-[11px] text-muted-foreground">{CLIENTS.length} clientes</p>
+                  <p className="text-[11px] text-muted-foreground">{clientOptions.length} clientes</p>
                 </div>
               </div>
             </CardContent>

@@ -3,7 +3,7 @@ import { MARGIN_THRESHOLD } from "@/types/financials";
 import type { CampaignWithClient } from "@/data/multiClientData";
 
 function computeMediaSpend(campaigns: CampaignWithClient[]): number {
-  return campaigns.reduce((s, c) => s + c.rollingCPA * 500 * c.spendVelocity, 0);
+  return campaigns.reduce((s, c) => s + (c.spend ?? c.rollingCPA * 500 * c.spendVelocity), 0);
 }
 
 export function computeManagementRevenue(financials: ClientFinancials, mediaSpend: number): number {

@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { classifySyncError, updateSyncStatus } from "../_shared/syncStatus.ts";
 import { resolveUserId } from "../_shared/internalAuth.ts";
+import { classifyGoogleChannel } from "../_shared/funnelRole.ts";
 
 const GOOGLE_ADS_API_VERSION = "v22";
 const MICROS = 1_000_000;
@@ -8,14 +9,6 @@ const MICROS = 1_000_000;
 function safeNum(v: unknown): number {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? "0"));
   return isNaN(n) ? 0 : n;
-}
-
-// Google Ads não expõe "objective" como o Meta — classificamos pelo tipo de canal da campanha.
-function classifyChannelType(channelType: string): "topo" | "meio" | "fundo" {
-  const upper = (channelType ?? "").toUpperCase();
-  if (["DISPLAY", "VIDEO", "DEMAND_GEN", "DISCOVERY", "SOCIAL"].includes(upper)) return "topo";
-  if (["MULTI_CHANNEL", "LOCAL_SERVICES"].includes(upper)) return "meio";
-  return "fundo";
 }
 
 type GaqlRow = Record<string, unknown>;
@@ -176,7 +169,7 @@ Deno.serve(async (req) => {
           const campId = campaign?.id ?? "";
           const campName = campaign?.name ?? "";
           const channelType = campaign?.advertisingChannelType ?? "";
-          const stage = classifyChannelType(channelType);
+          const stage = classifyGoogleChannel(channelType);
 
           const cost = safeNum(metrics?.costMicros) / MICROS;
           const impressions = safeNum(metrics?.impressions);

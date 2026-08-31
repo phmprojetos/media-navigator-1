@@ -1,4 +1,5 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { updateSyncStatus } from "../_shared/syncStatus.ts";
 
 // Chamado pelo pg_cron a cada 2 minutos (drenagem da fila). Nunca é chamado pelo frontend —
 // só aceita o pedido se o Authorization vier com a própria service role key, e é isso que
@@ -20,7 +21,13 @@ async function callFunction(baseUrl: string, serviceRoleKey: string, name: strin
   return res.json();
 }
 
-async function runDv360Job(baseUrl: string, serviceRoleKey: string, job: SyncJob): Promise<{ ok: boolean; error?: string }> {
+async function runDv360Job(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  baseUrl: string,
+  serviceRoleKey: string,
+  job: SyncJob,
+): Promise<{ ok: boolean; error?: string }> {
   const startRes = await callFunction(baseUrl, serviceRoleKey, "dv360-sync", {
     account_ids: [job.account_id],
     range_days: job.range_days,
@@ -47,7 +54,9 @@ async function runDv360Job(baseUrl: string, serviceRoleKey: string, job: SyncJob
     }
   }
 
-  return { ok: false, error: "Timeout aguardando o relatório do DV360 (a conta continua marcada como 'syncing' e será retomada numa próxima sincronização)." };
+  const timeoutMsg = "Tempo esgotado: o relatório do DV360 não ficou pronto em 1 min.";
+  await updateSyncStatus(supabase, job.user_id, "dv360", job.account_id, "failed", timeoutMsg);
+  return { ok: false, error: timeoutMsg };
 }
 
 async function runSimpleJob(baseUrl: string, serviceRoleKey: string, functionName: string, job: SyncJob): Promise<{ ok: boolean; error?: string }> {
@@ -92,7 +101,7 @@ Deno.serve(async (req) => {
 
       try {
         const outcome = job.platform === "dv360"
-          ? await runDv360Job(baseUrl, serviceRoleKey, job)
+          ? await runDv360Job(supabase, baseUrl, serviceRoleKey, job)
           : await runSimpleJob(baseUrl, serviceRoleKey, job.platform === "meta_ads" ? "meta-insights-sync" : "google-ads-sync", job);
 
         await supabase.from("sync_jobs").update({

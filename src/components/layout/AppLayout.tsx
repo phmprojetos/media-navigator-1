@@ -10,11 +10,13 @@ import {
   FlaskConical, Shield, Trophy, MessageSquare, ClipboardList, Users,
   Truck, Crown, Building, Bell, PiggyBank, CreditCard, Palette, Plug,
   Sun, Calendar, Rocket, Brain, Activity, ServerCog, Sparkles, Layers, UserPlus,
-  LogOut,
+  LogOut, Building2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ClientSwitcher } from "@/components/layout/ClientSwitcher";
 import { type LucideIcon } from "lucide-react";
+import { useAgency } from "@/hooks/useAgency";
 
 interface NavItem {
   name: string;
@@ -97,6 +99,7 @@ const navigationGroups: NavGroup[] = [
   {
     label: "PLATFORM",
     items: [
+      { name: "Agências", href: "/ops/agencies", icon: Building2, moduleKey: "ops-agencies" },
       { name: "Console da Plataforma", href: "/platform-console", icon: ServerCog, moduleKey: "platform-console" },
       { name: "Arquitetura", href: "/architecture", icon: Layers, moduleKey: "architecture" },
     ],
@@ -110,6 +113,7 @@ let _sidebarScrollTop = 0;
 const Sidebar = memo(function Sidebar({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
   const { canAccess } = useRBAC();
   const { user, signOut } = useAuth();
+  const { isPlatformOps } = useAgency();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -138,7 +142,11 @@ const Sidebar = memo(function Sidebar({ collapsed, onToggleCollapse }: { collaps
   const visibleGroups = navigationGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => canAccess(item.moduleKey)),
+      items: group.items.filter((item) => {
+        if (!canAccess(item.moduleKey)) return false;
+        if (item.moduleKey === "ops-agencies" && !isPlatformOps) return false;
+        return true;
+      }),
     }))
     .filter((group) => group.items.length > 0);
 
@@ -289,6 +297,10 @@ function MainContent({ children }: { children: React.ReactNode }) {
 
   return (
     <main ref={ref} className="flex-1 overflow-y-auto">
+      <div className="sticky top-0 z-20 flex items-center justify-end gap-3 px-6 py-3 border-b border-border/60 bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+        <span className="text-xs text-muted-foreground hidden sm:inline">Cliente</span>
+        <ClientSwitcher />
+      </div>
       <div className="animate-fade-in">
         {children}
       </div>

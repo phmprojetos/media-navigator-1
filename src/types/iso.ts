@@ -4,7 +4,7 @@
  * ═══════════════════════════════════════════════════════════════
  *
  * Substitui o antigo MBEI como métrica principal.
- * Escala: 0–100
+ * Escala: 0–100 (quando há dados de campanha)
  *
  * Componentes:
  *   - Entrega de Resultado       (30%)
@@ -15,17 +15,19 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
-export type ISOClassification = "excelente" | "saudavel" | "atencao" | "critico";
+export type ISOClassification = "excelente" | "saudavel" | "atencao" | "critico" | "indisponivel";
 
 export interface ISOScore {
-  /** Nota final ISO (0–100) */
+  /** false quando não há campanhas para calcular — não interpretar score/components */
+  available: boolean;
+  /** Nota final ISO (0–100). Sem dados: 0 (não usar para classificação). */
   score: number;
   classification: ISOClassification;
   classificationLabel: string;
   trend: "up" | "down" | "stable";
   trendDelta: number;
 
-  /** Componentes individuais (0–100 cada) */
+  /** Componentes individuais (0–100 cada). Sem dados: todos 0. */
   components: {
     performance: number;      // Entrega de Resultado (30%)
     efficiency: number;       // Eficiência de Investimento (20%)
@@ -40,7 +42,7 @@ export interface ISOScore {
 
 // ── Classification ──
 
-export function classifyISO(score: number): { classification: ISOClassification; label: string } {
+export function classifyISO(score: number): { classification: Exclude<ISOClassification, "indisponivel">; label: string } {
   if (score >= 90) return { classification: "excelente", label: "Excelente" };
   if (score >= 75) return { classification: "saudavel", label: "Saudável" };
   if (score >= 60) return { classification: "atencao", label: "Atenção" };
@@ -54,6 +56,7 @@ export const isoClassificationMeta: Record<ISOClassification, { label: string; c
   saudavel: { label: "Saudável", color: "text-primary", bg: "bg-primary/10", border: "border-primary/30" },
   atencao: { label: "Atenção", color: "text-status-warning", bg: "bg-status-warning/10", border: "border-status-warning/30" },
   critico: { label: "Crítico", color: "text-status-error", bg: "bg-status-error/10", border: "border-status-error/30" },
+  indisponivel: { label: "Sem dados", color: "text-muted-foreground", bg: "bg-muted/40", border: "border-border" },
 };
 
 export const ISO_COMPONENT_LABELS: Record<keyof ISOScore["components"], { label: string; weight: string }> = {
@@ -63,3 +66,7 @@ export const ISO_COMPONENT_LABELS: Record<keyof ISOScore["components"], { label:
   evolution: { label: "Evolução Temporal", weight: "20%" },
   operational: { label: "Qualidade Operacional", weight: "15%" },
 };
+
+export function formatISOScore(iso: ISOScore): string {
+  return iso.available ? String(iso.score) : "—";
+}

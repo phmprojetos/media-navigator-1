@@ -94,6 +94,7 @@ const navigationGroups: NavGroup[] = [
       { name: "Dados & Integrações", href: "/data-integrations", icon: Layers, moduleKey: "data-integrations" },
       { name: "Assinatura & Uso", href: "/subscription", icon: CreditCard, moduleKey: "subscription" },
       { name: "Config. Agência", href: "/agency-settings", icon: Palette, moduleKey: "agency-settings" },
+      { name: "Usuários (temporário)", href: "/users", icon: Users, moduleKey: "agency-users" },
     ],
   },
   {

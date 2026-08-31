@@ -13,6 +13,7 @@ import Login from "./pages/Login";
 import ResetPassword from "./pages/ResetPassword";
 import Onboarding from "./pages/Onboarding";
 import OpsAgencies from "./pages/OpsAgencies";
+import AgencyUsers from "./pages/AgencyUsers";
 import Dashboard from "./pages/Dashboard";
 import ExecutiveDashboard from "./pages/ExecutiveDashboard";
 import AgencyIndex from "./pages/AgencyIndex";
@@ -112,6 +113,7 @@ const App = () => (
                 <Route element={<AuthGuard><TenantGuard /></AuthGuard>}>
                   <Route path="/onboarding" element={<Onboarding />} />
                   <Route path="/ops/agencies" element={<OpsAgencies />} />
+                  <Route path="/users" element={<AgencyUsers />} />
                   {/* OPERAÇÃO */}
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/dashboard" element={<Dashboard />} />

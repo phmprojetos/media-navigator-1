@@ -2,13 +2,17 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
 import { ThemeProvider } from "next-themes";
 import { TenantProvider } from "@/contexts/TenantContext";
 import { RBACProvider } from "@/contexts/RBACContext";
+import { ClientProvider } from "@/contexts/ClientContext";
 import { useAuth } from "@/hooks/useAuth";
+import { useAgency } from "@/hooks/useAgency";
 import Login from "./pages/Login";
 import ResetPassword from "./pages/ResetPassword";
+import Onboarding from "./pages/Onboarding";
+import OpsAgencies from "./pages/OpsAgencies";
 import Dashboard from "./pages/Dashboard";
 import ExecutiveDashboard from "./pages/ExecutiveDashboard";
 import AgencyIndex from "./pages/AgencyIndex";
@@ -64,7 +68,33 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
-  return <>{children}</>;
+  return <ClientProvider>{children}</ClientProvider>;
+}
+
+function TenantGuard() {
+  const { agency, loading, onboardingPending } = useAgency();
+  const location = useLocation();
+
+  if (loading) return null;
+
+  if (!agency) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6 text-center">
+        <div className="max-w-md space-y-2">
+          <h1 className="text-lg font-semibold text-foreground">Conta sem agência</h1>
+          <p className="text-sm text-muted-foreground">
+            Este login não está vinculado a um tenant. A operação do MediaHub precisa provisionar a agência e as credenciais.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const onOnboarding = location.pathname.startsWith("/onboarding");
+  if (onboardingPending && !onOnboarding) return <Navigate to="/onboarding" replace />;
+  if (!onboardingPending && onOnboarding) return <Navigate to="/" replace />;
+
+  return <Outlet />;
 }
 
 const App = () => (
@@ -79,7 +109,9 @@ const App = () => (
               <Routes>
                 <Route path="/login" element={<Login />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
-                <Route element={<AuthGuard><Outlet /></AuthGuard>}>
+                <Route element={<AuthGuard><TenantGuard /></AuthGuard>}>
+                  <Route path="/onboarding" element={<Onboarding />} />
+                  <Route path="/ops/agencies" element={<OpsAgencies />} />
                   {/* OPERAÇÃO */}
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/dashboard" element={<Dashboard />} />

@@ -8,28 +8,29 @@ import {
   FileText, Download, DollarSign, BarChart3, Shield, Target,
   TrendingUp, AlertTriangle, PiggyBank, Activity,
 } from "lucide-react";
-import { ALL_CAMPAIGNS } from "@/data/multiClientData";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { generateAlerts } from "@/types/alerts";
-import { CLIENTS } from "@/data/multiClientData";
 import { getMomentumCategory } from "@/lib/efficiencyCalculations";
 import { computeRiskScore, riskLevelMeta, type RiskLevel } from "@/lib/benchmarkCalculations";
 import { healthLevelMeta } from "@/types/operational";
 import { cn } from "@/lib/utils";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
 import { materializeFeatureStore } from "@/lib/featureStoreHub";
 import jsPDF from "jspdf";
 
 export default function MonthlyExecutiveSummary() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
 
-  const campaigns = useMemo(() => {
-    let result = ALL_CAMPAIGNS.filter(c => c.status === "active");
-    if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
-    if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.campaignId !== "all") result = result.filter(c => c.campaignId === filters.campaignId);
-    return result;
-  }, [filters]);
+  const campaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, filters, { activeOnly: true }),
+    [syncedCampaigns, filters]
+  );
 
   // ── SINGLE SOURCE OF TRUTH: Feature Store Hub ──
   const store = useMemo(() => materializeFeatureStore(campaigns), [campaigns]);
@@ -85,7 +86,7 @@ export default function MonthlyExecutiveSummary() {
     doc.text(`Economia de Mídia: ${formatCurrency(totalSavings)}`, 25, 66);
     doc.text(`Receita da Agência: ${formatCurrency(agencyFinancials.totalRevenue)}`, 25, 74);
     doc.text(`Margem Bruta: ${agencyFinancials.marginPercent.toFixed(1)}%`, 25, 82);
-    doc.text(`ISO (Saúde da Operação): ${store.iso.score} (${store.iso.classificationLabel})`, 25, 90);
+    doc.text(`ISO (Saúde da Operação): ${store.iso.available ? `${store.iso.score} (${store.iso.classificationLabel})` : "Sem dados"}`, 25, 90);
     doc.text(`Agency Health Index: ${healthIndex.score} (${healthLevelMeta[healthIndex.level].label})`, 25, 98);
     doc.text(`Forecast Accuracy: ${forecastAccuracy}%`, 25, 106);
 
@@ -125,7 +126,9 @@ export default function MonthlyExecutiveSummary() {
         </div>
 
         {/* Filters */}
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* Main KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -1,19 +1,27 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Bell, CheckCircle2, AlertTriangle, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
-import { ALL_CAMPAIGNS } from "@/data/multiClientData";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
+import { useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { generateAlerts, getSeverityMeta, getAlertTypeLabel, type AlertLog, type AlertSeverity, type AlertStatus } from "@/types/alerts";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
 
 export default function AlertsCenter() {
-  const allAlerts = useMemo(() => generateAlerts(ALL_CAMPAIGNS), []);
-  const [alerts, setAlerts] = useState<AlertLog[]>(allAlerts);
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
+  const generated = useMemo(() => generateAlerts(syncedCampaigns), [syncedCampaigns]);
+  const [alerts, setAlerts] = useState<AlertLog[]>([]);
+  useEffect(() => {
+    setAlerts(generated);
+  }, [generated]);
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, loading: clientsLoading } = useClient();
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [alertStatusFilter, setAlertStatusFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
@@ -21,9 +29,9 @@ export default function AlertsCenter() {
   // Map campaign_id to client info
   const campaignClientMap = useMemo(() => {
     const map: Record<string, { clientId: string; clientName: string }> = {};
-    ALL_CAMPAIGNS.forEach(c => { map[c.campaignId] = { clientId: c.clientId, clientName: c.clientName }; });
+    syncedCampaigns.forEach(c => { map[c.campaignId] = { clientId: c.clientId, clientName: c.clientName }; });
     return map;
-  }, []);
+  }, [syncedCampaigns]);
 
   const filtered = useMemo(() => {
     return alerts.filter(a => {
@@ -60,7 +68,9 @@ export default function AlertsCenter() {
         </div>
 
         {/* Global Filters */}
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} showStatus={false} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} showStatus={false} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* Alert-specific filters */}
         <div className="flex flex-wrap items-center gap-3">

@@ -76,6 +76,7 @@ export const ROLE_PERMISSIONS: Record<AppRole, Record<string, AccessLevel>> = {
     "pattern-intelligence": "full",
     "data-integrations": "full",
     "platform-console": "full",
+    "ops-agencies": "full",
     "architecture": "full",
     "intelligence-overview": "full",
     "lead-gen": "full",

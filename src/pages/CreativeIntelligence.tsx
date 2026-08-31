@@ -6,8 +6,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Lightbulb, TrendingUp, TrendingDown, AlertTriangle, Image, Video, FileText, LayoutGrid, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
-import { ALL_CREATIVES, ALL_CAMPAIGNS, type CreativeWithClient } from "@/data/multiClientData";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
+import { ALL_CREATIVES, type CreativeWithClient } from "@/data/multiClientData";
+import { useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { cn } from "@/lib/utils";
 import { getMomentumMeta } from "@/lib/efficiencyCalculations";
 import type { MomentumCategory } from "@/types/efficiency";
@@ -23,7 +27,9 @@ const mockInsights = [
 type GroupBy = "none" | "client" | "dsp" | "campaign" | "angle";
 
 export default function CreativeIntelligence() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
   const [viewMode, setViewMode] = useState<"table" | "cards">("table");
 
@@ -31,9 +37,9 @@ export default function CreativeIntelligence() {
     let result = ALL_CREATIVES;
     if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
     if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.campaignId !== "all") result = result.filter(c => ALL_CAMPAIGNS.find(camp => camp.campaignId === filters.campaignId)?.campaignName === c.campaignName);
+    if (filters.campaignId !== "all") result = result.filter(c => syncedCampaigns.find(camp => camp.campaignId === filters.campaignId)?.campaignName === c.campaignName);
     return result;
-  }, [filters]);
+  }, [filters, syncedCampaigns]);
 
   const grouped = useMemo(() => {
     if (groupBy === "none") return { "Todos": filtered };
@@ -83,7 +89,9 @@ export default function CreativeIntelligence() {
         </div>
 
         {/* Global Filter Bar */}
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} showStatus={false} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} showStatus={false} />
+
+        {ALL_CREATIVES.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* Group By + Stats */}
         <div className="flex items-center justify-between">

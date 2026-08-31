@@ -1,34 +1,39 @@
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
-import { ALL_CAMPAIGNS } from "@/data/multiClientData";
+import { useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { materializeFeatureStore } from "@/lib/featureStoreHub";
 import { ClientSelector } from "@/components/maturity/ClientSelector";
 import { AgencyConsolidatedView } from "@/components/maturity/AgencyConsolidatedView";
 import { ClientDeepFocusView } from "@/components/maturity/ClientDeepFocusView";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
 
 export default function Maturity() {
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const { clients, loading: clientsLoading, selectedClientId, setSelectedClientId } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
 
-  const store = useMemo(() => materializeFeatureStore(ALL_CAMPAIGNS.filter(c => c.status === "active")), []);
+  const store = useMemo(
+    () => materializeFeatureStore(syncedCampaigns.filter((c) => c.status === "active")),
+    [syncedCampaigns]
+  );
   const summary = store.agencyIMCSummary;
 
   const selectedIMC = useMemo(
-    () => selectedClientId ? summary.clientScores.find(c => c.clientId === selectedClientId) ?? null : null,
+    () => (selectedClientId ? summary.clientScores.find((c) => c.clientId === selectedClientId) ?? null : null),
     [selectedClientId, summary.clientScores]
   );
 
   return (
     <AppLayout>
       <div className="p-6 space-y-6 max-w-[1400px]">
-        {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               {selectedIMC && (
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedClientId(null)}>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedClientId(clients[0]?.id ?? null)}>
                   <ArrowLeft className="w-4 h-4" />
                 </Button>
               )}
@@ -44,12 +49,13 @@ export default function Maturity() {
           <ClientSelector
             clients={summary.clientScores}
             selectedClientId={selectedClientId}
-            onSelect={setSelectedClientId}
+            onSelect={(id) => setSelectedClientId(id ?? clients[0]?.id ?? null)}
           />
         </div>
 
-        {/* Conditional view */}
-        {selectedIMC ? (
+        {summary.clientScores.length === 0 ? (
+          <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />
+        ) : selectedIMC ? (
           <ClientDeepFocusView imc={selectedIMC} />
         ) : (
           <AgencyConsolidatedView summary={summary} onSelectClient={setSelectedClientId} />

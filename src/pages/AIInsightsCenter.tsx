@@ -9,7 +9,7 @@ import {
   DollarSign, Calendar, Sparkles, Filter, ChevronDown, ChevronUp,
   ShieldCheck,
 } from "lucide-react";
-import { ALL_CAMPAIGNS, CLIENTS } from "@/data/multiClientData";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { inferFunnelStage } from "@/lib/aiCopilotEngine";
 import { materializeFeatureStore } from "@/lib/featureStoreHub";
 import {
@@ -17,7 +17,10 @@ import {
   INSIGHT_TYPE_META, type FunnelStage, type InsightType,
 } from "@/types/aiCopilot";
 import { cn } from "@/lib/utils";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
 
 const funnelIcons: Record<FunnelStage, React.ReactNode> = {
@@ -36,18 +39,17 @@ const insightTypeIcons: Record<InsightType, React.ReactNode> = {
 };
 
 export default function AIInsightsCenter() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
   const [funnelFilter, setFunnelFilter] = useState<string>("all");
   const [insightTypeFilter, setInsightTypeFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const campaigns = useMemo(() => {
-    let result = ALL_CAMPAIGNS.filter(c => c.status === "active");
-    if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
-    if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.campaignId !== "all") result = result.filter(c => c.campaignId === filters.campaignId);
-    return result;
-  }, [filters]);
+  const campaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, filters, { activeOnly: true }),
+    [syncedCampaigns, filters]
+  );
 
   // ── Feature Store Hub (SSoT) ──
   const store = useMemo(() => materializeFeatureStore(campaigns), [campaigns]);
@@ -89,7 +91,9 @@ export default function AIInsightsCenter() {
         </div>
 
         {/* Filters */}
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* Funnel Distribution */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

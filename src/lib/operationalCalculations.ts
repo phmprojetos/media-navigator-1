@@ -115,16 +115,15 @@ export function computeTargetDeviations(
   return deviations;
 }
 
-// ── Mock Adoption Impact ──
-
+/** Adoption impact — zeros until tracking is wired to real outcomes. */
 export function computeAdoptionImpact(): AdoptionImpact {
   return {
-    totalSavings: 847250,
-    cpaReduction: 18.5,
-    alertResolutionRate: 82,
-    marginImprovement: 12.3,
-    recommendationsApplied: 73,
-    efficiencyImprovement: 22.7,
-    monthsTracked: 6,
+    totalSavings: 0,
+    cpaReduction: 0,
+    alertResolutionRate: 0,
+    marginImprovement: 0,
+    recommendationsApplied: 0,
+    efficiencyImprovement: 0,
+    monthsTracked: 0,
   };
 }

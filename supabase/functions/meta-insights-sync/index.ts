@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { classifySyncError, updateSyncStatus } from "../_shared/syncStatus.ts";
 import { resolveUserId } from "../_shared/internalAuth.ts";
+import { classifyMetaObjective } from "../_shared/funnelRole.ts";
 
 const GRAPH_URL = "https://graph.facebook.com/v25.0";
 const ATTR_WINDOWS = encodeURIComponent(JSON.stringify(["1d_click", "7d_click", "1d_view", "7d_view"]));
@@ -12,18 +13,30 @@ function safeNum(v: unknown): number {
   return isNaN(n) ? 0 : n;
 }
 
-function extractConversions(actions: ActionRow[] = []): number {
-  const types = ["purchase", "lead", "complete_registration", "offsite_conversion.fb_pixel_purchase", "offsite_conversion.fb_pixel_lead"];
-  return actions.filter(a => types.some(t => a.action_type.includes(t))).reduce((s, a) => s + safeNum(a.value), 0);
+/** Somente eventos de venda (purchase). Leads / registro / cliques NÃO contam. */
+const PURCHASE_ACTION_TYPES = [
+  "purchase",
+  "omni_purchase",
+  "offsite_conversion.fb_pixel_purchase",
+  "onsite_conversion.purchase",
+  "web_in_store_purchase",
+];
+
+function isPurchaseAction(actionType: string): boolean {
+  const t = (actionType ?? "").toLowerCase();
+  return PURCHASE_ACTION_TYPES.some((p) => t === p || t.endsWith(`.${p}`) || t.includes("purchase"));
 }
 
-function extractConvWindow(actions: ActionRow[] = [], win: string): number {
-  const types = ["purchase", "lead", "complete_registration", "offsite_conversion.fb_pixel_purchase", "offsite_conversion.fb_pixel_lead"];
-  return actions.filter(a => types.some(t => a.action_type.includes(t))).reduce((s, a) => s + safeNum(a[win] ?? "0"), 0);
+function extractPurchaseConversions(actions: ActionRow[] = []): number {
+  return actions.filter((a) => isPurchaseAction(a.action_type)).reduce((s, a) => s + safeNum(a.value), 0);
+}
+
+function extractPurchaseConvWindow(actions: ActionRow[] = [], win: string): number {
+  return actions.filter((a) => isPurchaseAction(a.action_type)).reduce((s, a) => s + safeNum(a[win] ?? "0"), 0);
 }
 
 function extractRevenue(actionValues: ActionRow[] = []): number {
-  return actionValues.filter(a => a.action_type.includes("purchase")).reduce((s, a) => s + safeNum(a.value), 0);
+  return actionValues.filter((a) => isPurchaseAction(a.action_type)).reduce((s, a) => s + safeNum(a.value), 0);
 }
 
 // Meta só aceita presets fixos (não um N arbitrário de dias) — mapeia pro preset mais próximo.
@@ -31,13 +44,6 @@ function daysToPreset(days: number): string {
   if (days <= 7) return "last_7d";
   if (days <= 30) return "last_30d";
   return "last_90d";
-}
-
-function classifyObjective(objective: string): "topo" | "meio" | "fundo" {
-  const upper = (objective ?? "").toUpperCase();
-  if (["BRAND_AWARENESS", "REACH", "AWARENESS", "VIDEO_VIEWS", "OUTCOME_AWARENESS"].some(o => upper.includes(o))) return "topo";
-  if (["TRAFFIC", "ENGAGEMENT", "POST_ENGAGEMENT", "PAGE_LIKES", "LINK_CLICKS", "EVENT_RESPONSES", "MESSAGES", "OUTCOME_TRAFFIC", "OUTCOME_ENGAGEMENT"].some(o => upper.includes(o))) return "meio";
-  return "fundo";
 }
 
 type Agg = {
@@ -127,14 +133,12 @@ Deno.serve(async (req) => {
         for (const row of rows) {
           const date = String(row.date_start ?? "").slice(0, 10);
           const actions = (row.actions as ActionRow[]) ?? [];
-          const pixelConv = extractConversions(actions);
+          const conversoes = extractPurchaseConversions(actions);
           const receita = extractRevenue((row.action_values as ActionRow[]) ?? []);
-          const linkClicks = actions.filter(a => a.action_type === "link_click" || a.action_type === "outbound_click").reduce((s, a) => s + safeNum(a.value), 0);
-          const conversoes = pixelConv > 0 ? pixelConv : linkClicks;
-          const c1dc = extractConvWindow(actions, "1d_click");
-          const c7dc = extractConvWindow(actions, "7d_click");
-          const c1dv = extractConvWindow(actions, "1d_view");
-          const c7dv = extractConvWindow(actions, "7d_view");
+          const c1dc = extractPurchaseConvWindow(actions, "1d_click");
+          const c7dc = extractPurchaseConvWindow(actions, "7d_click");
+          const c1dv = extractPurchaseConvWindow(actions, "1d_view");
+          const c7dv = extractPurchaseConvWindow(actions, "7d_view");
 
           const tk = `${date}__topo`;
           if (!byDateStage[tk]) byDateStage[tk] = newAgg();
@@ -198,14 +202,12 @@ Deno.serve(async (req) => {
             const campId = String(row.campaign_id ?? "");
             const campName = String(row.campaign_name ?? "");
             const objective = String(row.objective ?? "");
-            const stage = classifyObjective(objective);
+            const stage = classifyMetaObjective(objective);
             const actions = (row.actions as ActionRow[]) ?? [];
-            const pixelConv = extractConversions(actions);
+            const conversoes = extractPurchaseConversions(actions);
             const receita = extractRevenue((row.action_values as ActionRow[]) ?? []);
-            const linkClicks = actions.filter(a => a.action_type === "link_click" || a.action_type === "outbound_click").reduce((s, a) => s + safeNum(a.value), 0);
-            const conversoes = pixelConv > 0 ? pixelConv : linkClicks;
-            const c1dc = extractConvWindow(actions, "1d_click"); const c7dc = extractConvWindow(actions, "7d_click");
-            const c1dv = extractConvWindow(actions, "1d_view");  const c7dv = extractConvWindow(actions, "7d_view");
+            const c1dc = extractPurchaseConvWindow(actions, "1d_click"); const c7dc = extractPurchaseConvWindow(actions, "7d_click");
+            const c1dv = extractPurchaseConvWindow(actions, "1d_view");  const c7dv = extractPurchaseConvWindow(actions, "7d_view");
 
             const key = `${campId}__${date}__${stage}`;
             if (!byCampDateStage[key]) byCampDateStage[key] = { campaign_id: campId, campaign_name: campName, objective, ...newAgg() };

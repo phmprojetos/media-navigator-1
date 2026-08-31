@@ -7,16 +7,19 @@ import {
   Sun, AlertTriangle, TrendingDown, Target, Lightbulb, DollarSign,
   Activity, ShieldAlert, Heart, BarChart3, Brain, Sparkles,
 } from "lucide-react";
-import { ALL_CAMPAIGNS } from "@/data/multiClientData";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { getMomentumMeta } from "@/lib/efficiencyCalculations";
 import { generateAlerts } from "@/types/alerts";
 import { MARGIN_THRESHOLD } from "@/types/financials";
 import { cn } from "@/lib/utils";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
 import { FUNNEL_STAGE_META, INSIGHT_TYPE_META } from "@/types/aiCopilot";
 import { PageInfoTooltip } from "@/components/ui/page-info-tooltip";
 import { materializeFeatureStore } from "@/lib/featureStoreHub";
-import { isoClassificationMeta, ISO_COMPONENT_LABELS } from "@/types/iso";
+import { isoClassificationMeta, ISO_COMPONENT_LABELS, formatISOScore } from "@/types/iso";
 
 function StatusDot({ status }: { status: "green" | "yellow" | "red" }) {
   const colors = {
@@ -28,15 +31,14 @@ function StatusDot({ status }: { status: "green" | "yellow" | "red" }) {
 }
 
 export default function DailyBrief() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
 
-  const campaigns = useMemo(() => {
-    let result = ALL_CAMPAIGNS.filter(c => c.status === "active");
-    if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
-    if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.campaignId !== "all") result = result.filter(c => c.campaignId === filters.campaignId);
-    return result;
-  }, [filters]);
+  const campaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, filters, { activeOnly: true }),
+    [syncedCampaigns, filters]
+  );
 
   const store = useMemo(() => materializeFeatureStore(campaigns), [campaigns]);
   const alerts = useMemo(() => generateAlerts(campaigns), [campaigns]);
@@ -90,14 +92,16 @@ export default function DailyBrief() {
             <Activity className={cn("w-5 h-5", isoMeta.color)} />
             <div>
               <p className="text-xs text-muted-foreground">ISO</p>
-              <p className={cn("text-xl font-bold", isoMeta.color)}>{iso.score}</p>
+              <p className={cn("text-xl font-bold", isoMeta.color)}>{formatISOScore(iso)}</p>
             </div>
             <Badge className={cn("text-xs", isoMeta.bg, isoMeta.color, isoMeta.border, "border")}>{iso.classificationLabel}</Badge>
           </div>
         </div>
 
         {/* Filters */}
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         {/* KPI Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -109,13 +113,19 @@ export default function DailyBrief() {
                   <Activity className="w-4 h-4 text-primary" />
                   <span className="text-sm font-medium text-foreground">ISO — Saúde da Operação</span>
                 </div>
-                <StatusDot status={getStatus(iso.score, 75, 60)} />
+                {iso.available ? (
+                  <StatusDot status={getStatus(iso.score, 75, 60)} />
+                ) : (
+                  <StatusDot status="yellow" />
+                )}
               </div>
               <div className="flex items-baseline gap-3">
-                <span className="text-3xl font-bold text-foreground">{iso.score}</span>
-                <span className={cn("text-sm font-medium", momentumMeta.color)}>
-                  {momentumMeta.arrow} {agencyAgg.momentumDelta >= 0 ? "+" : ""}{agencyAgg.momentumDelta.toFixed(1)}%
-                </span>
+                <span className="text-3xl font-bold text-foreground">{formatISOScore(iso)}</span>
+                {iso.available && (
+                  <span className={cn("text-sm font-medium", momentumMeta.color)}>
+                    {momentumMeta.arrow} {agencyAgg.momentumDelta >= 0 ? "+" : ""}{agencyAgg.momentumDelta.toFixed(1)}%
+                  </span>
+                )}
               </div>
               <p className="text-xs text-muted-foreground mt-1">{iso.classificationLabel}</p>
             </CardContent>
@@ -213,21 +223,25 @@ export default function DailyBrief() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              {(Object.entries(iso.components) as [keyof typeof iso.components, number][]).map(([key, value]) => {
-                const comp = ISO_COMPONENT_LABELS[key];
-                return (
-                  <div key={key} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">{comp.label}</span>
-                      <span className="text-xs font-bold text-foreground">{value}</span>
+            {iso.available ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                {(Object.entries(iso.components) as [keyof typeof iso.components, number][]).map(([key, value]) => {
+                  const comp = ISO_COMPONENT_LABELS[key];
+                  return (
+                    <div key={key} className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">{comp.label}</span>
+                        <span className="text-xs font-bold text-foreground">{value}</span>
+                      </div>
+                      <Progress value={value} className="h-1.5" />
+                      <span className="text-[10px] text-muted-foreground">{comp.weight}</span>
                     </div>
-                    <Progress value={value} className="h-1.5" />
-                    <span className="text-[10px] text-muted-foreground">{comp.weight}</span>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">{iso.aiSummary}</p>
+            )}
           </CardContent>
         </Card>
 

@@ -1,7 +1,10 @@
 import { useState, useMemo } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { GlobalFilterBar, type FilterState } from "@/components/intelligence/GlobalFilterBar";
-import { ALL_CAMPAIGNS } from "@/data/multiClientData";
+import { GlobalFilterBar } from "@/components/intelligence/GlobalFilterBar";
+import { useIntelligenceFilters } from "@/hooks/useIntelligenceFilters";
+import { NoCampaignData } from "@/components/intelligence/NoCampaignData";
+import { useClient } from "@/contexts/ClientContext";
+import { applyCampaignFilters, useSyncedCampaigns } from "@/hooks/useSyncedCampaigns";
 import { generateAlerts } from "@/types/alerts";
 import {
   getRecommendationStats,
@@ -33,19 +36,17 @@ const typeIcons: Record<RecommendationType, React.ReactNode> = {
 };
 
 export default function OptimizationCenter() {
-  const [filters, setFilters] = useState<FilterState>({ clientId: "all", platform: "all", campaignId: "all", status: "all" });
+  const { filters, setFilters } = useIntelligenceFilters();
+  const { clients, loading: clientsLoading } = useClient();
+  const { campaigns: syncedCampaigns, loading: campaignsLoading } = useSyncedCampaigns();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [statuses, setStatuses] = useState<Record<string, Recommendation["status"]>>({});
 
-  const filteredCampaigns = useMemo(() => {
-    let result = ALL_CAMPAIGNS.slice();
-    if (filters.clientId !== "all") result = result.filter(c => c.clientId === filters.clientId);
-    if (filters.platform !== "all") result = result.filter(c => c.platform === filters.platform);
-    if (filters.campaignId !== "all") result = result.filter(c => c.campaignId === filters.campaignId);
-    if (filters.status !== "all") result = result.filter(c => c.status === filters.status);
-    return result;
-  }, [filters]);
+  const filteredCampaigns = useMemo(
+    () => applyCampaignFilters(syncedCampaigns, filters),
+    [syncedCampaigns, filters]
+  );
 
   // ── Feature Store Hub (SSoT) ──
   const store = useMemo(() => materializeFeatureStore(filteredCampaigns), [filteredCampaigns]);
@@ -77,7 +78,9 @@ export default function OptimizationCenter() {
         </div>
 
         {/* Filters */}
-        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={ALL_CAMPAIGNS} />
+        <GlobalFilterBar filters={filters} onFiltersChange={setFilters} campaigns={syncedCampaigns} />
+
+        {syncedCampaigns.length === 0 && <NoCampaignData hasClients={clients.length > 0} clientsLoading={clientsLoading} campaignsLoading={campaignsLoading} />}
 
         <div className="flex flex-wrap items-center gap-3">
           <Select value={typeFilter} onValueChange={setTypeFilter}>
